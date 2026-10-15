@@ -54,7 +54,7 @@
       <% } else { %>
         <a class="btn btn-primary btn-block btn-sso" href="/auth/login">
           <svg class="sso-crest"><use href="#i-crest"/></svg>
-          Accedi con le credenziali d'Ateneo
+          Accedi con <%= loginLabel %>
         </a>
       <% } %>
 
@@ -62,9 +62,9 @@
         <svg><use href="#i-shield"/></svg>
         <p>
           <strong>La tua password resta all'Ateneo.</strong>
-          L'autenticazione avviene sul portale ufficiale di <%= uni.name %>: questa piattaforma
-          non riceve né conserva mai le tue credenziali, ma solo la conferma che sei iscritto/a,
-          con nome ed email istituzionale.
+          L'autenticazione avviene sulla pagina di accesso ufficiale del tuo account istituzionale:
+          questa piattaforma non riceve né conserva mai le tue credenziali, ma solo la conferma
+          che il tuo account appartiene a <%= uni.name %>, con nome ed email istituzionale.
         </p>
       </div>
     </div>

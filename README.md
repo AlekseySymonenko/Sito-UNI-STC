@@ -15,6 +15,38 @@ Piattaforma web in stile e-learning universitario per condividere i materiali de
 - 🔎 Ricerca per titolo, descrizione, nome file o corso e filtri per tipo.
 - 📱 Interfaccia responsive, colori e nome dell'Ateneo personalizzabili.
 
+## 🎓 Guida rapida: pubblicare il sito per la Bicocca (anche da iPad)
+
+Configurazione già pronta: entrano **solo** gli account Google `@campus.unimib.it`
+(verificati da Google con il claim firmato `hd`, non solo dall'indirizzo email).
+
+### 1 · Creare le "chiavi" di accesso Google (gratis)
+1. Vai su <https://console.cloud.google.com> ed entra con un tuo account Google.
+2. Crea un nuovo progetto (es. `elearning-bicocca`).
+3. **API e servizi → Schermata consenso OAuth** (o *Google Auth Platform*):
+   tipo utente **Esterno**, nome app, email di supporto; ambiti: `openid`, `email`, `profile`.
+   Al termine premi **Pubblica app** (altrimenti entrano solo gli utenti di test).
+4. **Credenziali → Crea credenziali → ID client OAuth → Applicazione web**.
+   In *URI di reindirizzamento autorizzati* inserisci:
+   `https://<nome-del-sito>.onrender.com/auth/callback`
+5. Copia **ID client** e **Client secret**.
+
+### 2 · Pubblicare su Render
+1. Vai su <https://render.com>, accedi con GitHub.
+2. **New → Blueprint** e scegli questo repository: Render legge `render.yaml`.
+3. Compila le 4 voci richieste:
+   - `OIDC_CLIENT_ID` e `OIDC_CLIENT_SECRET`: quelli del punto 1
+   - `OIDC_REDIRECT_URI`: `https://<nome-del-sito>.onrender.com/auth/callback`
+   - `ADMIN_EMAILS`: la tua email `@campus.unimib.it` (diventi amministratore)
+4. Conferma. Dopo qualche minuto il sito è online all'indirizzo `https://<nome-del-sito>.onrender.com`.
+
+Se l'indirizzo assegnato da Render è diverso da quello previsto, aggiorna sia
+`OIDC_REDIRECT_URI` su Render sia l'URI di reindirizzamento su Google.
+
+> Se al login Google mostra un errore del tipo "app bloccata dall'amministratore",
+> significa che l'Ateneo blocca le app esterne sugli account campus: in quel caso
+> si passa all'accesso tramite link via email istituzionale.
+
 ## Requisiti
 
 - Node.js **22.13 o superiore** (usa il modulo integrato `node:sqlite`, nessuna dipendenza nativa)

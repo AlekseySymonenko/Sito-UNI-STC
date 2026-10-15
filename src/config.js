@@ -30,6 +30,8 @@ const config = {
     platformName: process.env.PLATFORM_NAME || 'e-Learning',
     primaryColor: process.env.PRIMARY_COLOR || '#8c1d2f',
     accentColor: process.env.ACCENT_COLOR || '#c8a24a',
+    // Nota a piè di pagina, es. "Progetto studentesco non ufficiale".
+    disclaimer: process.env.DISCLAIMER || '',
   },
 
   sessionSecret: process.env.SESSION_SECRET || '',
@@ -54,6 +56,8 @@ const config = {
     redirectUri: process.env.OIDC_REDIRECT_URI || '',
     scopes: process.env.OIDC_SCOPES || 'openid email profile',
     providerLabel: process.env.OIDC_PROVIDER_LABEL || "credenziali d'Ateneo",
+    // Google Workspace: dominio dell'organizzazione da imporre (claim "hd").
+    hostedDomain: (process.env.OIDC_HOSTED_DOMAIN || '').trim().toLowerCase(),
     // Claim opzionale da verificare (es. eduPersonAffiliation=student).
     requiredClaim: process.env.OIDC_REQUIRED_CLAIM || '',
     requiredClaimValues: list(process.env.OIDC_REQUIRED_CLAIM_VALUES),

@@ -64,6 +64,7 @@ const MONTHS = ['gen', 'feb', 'mar', 'apr', 'mag', 'giu', 'lug', 'ago', 'set', '
 app.locals.uni = config.university;
 app.locals.KINDS = KINDS;
 app.locals.authMode = config.authMode;
+app.locals.loginLabel = config.oidc.providerLabel;
 app.locals.formatBytes = (n) => {
   if (!n) return '0 B';
   const u = ['B', 'KB', 'MB', 'GB', 'TB'];

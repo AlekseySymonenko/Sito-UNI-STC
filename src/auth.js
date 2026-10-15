@@ -112,6 +112,7 @@ router.get('/auth/login', async (req, res, next) => {
       code_challenge_method: 'S256',
       state,
       nonce,
+      ...(config.oidc.hostedDomain ? { hd: config.oidc.hostedDomain } : {}),
     });
     req.session.save(() => res.redirect(url));
   } catch (err) {
@@ -143,6 +144,15 @@ router.get('/auth/callback', async (req, res, next) => {
       try {
         claims = { ...claims, ...(await client.userinfo(tokenSet)) };
       } catch (_) { /* userinfo non disponibile */ }
+    }
+    // Il parametro "hd" nella richiesta è solo un suggerimento: va verificato nel token firmato.
+    const hd = String(claims.hd || '').toLowerCase();
+    if ((config.oidc.hostedDomain && hd !== config.oidc.hostedDomain) || claims.email_verified === false) {
+      db.audit(null, 'login_rifiutato', `${pickEmail(claims)}: account non appartenente a ${config.oidc.hostedDomain || 'dominio verificato'}`);
+      return res.status(403).render('login', {
+        title: 'Accesso',
+        error: `Accedi con il tuo account istituzionale${config.oidc.hostedDomain ? ` @${config.oidc.hostedDomain}` : ''}.`,
+      });
     }
     if (!claimSatisfied(claims)) {
       db.audit(null, 'login_rifiutato', `${pickEmail(claims)}: requisito ${config.oidc.requiredClaim} non soddisfatto`);
