@@ -4,7 +4,7 @@
  *
  * supabaseUrl e supabaseAnonKey si trovano su Supabase in:
  *   Project Settings → API  (oppure il pulsante "Connect" in alto)
- * La "anon public key" è pensata per stare nel sito: è pubblica e sicura,
+ * La chiave pubblica ("publishable" o "anon") è pensata per stare nel sito: è pubblica e sicura,
  * perché i permessi veri sono controllati dal database.
  * NON inserire mai qui la chiave "service_role" / "secret".
  *
@@ -12,8 +12,8 @@
  * dati di esempio salvati solo sul dispositivo di chi lo apre.
  */
 window.APP_CONFIG = {
-  supabaseUrl: '',
-  supabaseAnonKey: '',
+  supabaseUrl: 'https://bbyaljjyjfhufesjxycf.supabase.co',
+  supabaseAnonKey: 'sb_publishable_i2fK_GSxrDxBBXTLZrnccQ_5Ct0ml8F',
 
   // Solo gli account con questo dominio possono entrare
   allowedDomain: 'campus.unimib.it',
