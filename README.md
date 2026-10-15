@@ -1,4 +1,4 @@
-# e-Learning d'Ateneo
+# Sito per studenti da studenti per condividere appunti
 
 Piattaforma web in stile e-learning universitario per condividere i materiali dei corsi:
 **PDF, immagini, audio, video e documenti** (slide, dispense, appunti).
