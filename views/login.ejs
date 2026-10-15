@@ -1,0 +1,74 @@
+<%- include('partials/head') %>
+<body class="login-page">
+<%- include('partials/icons') %>
+<div class="login-grid">
+  <section class="login-hero">
+    <div class="hero-pattern" aria-hidden="true"></div>
+    <a class="brand brand-lg" href="/login">
+      <svg class="brand-crest"><use href="#i-crest"/></svg>
+      <span class="brand-text">
+        <strong><%= uni.platformName %></strong>
+        <small><%= uni.name %></small>
+      </span>
+    </a>
+    <div class="hero-copy">
+      <p class="eyebrow">Piattaforma didattica</p>
+      <h1>Tutti i materiali dei tuoi corsi, in un unico luogo.</h1>
+      <p class="lead">Dispense, slide, registrazioni delle lezioni e immagini condivise dalla comunità studentesca dell'Ateneo.</p>
+      <ul class="hero-features">
+        <li><span class="feat-ic"><svg><use href="#i-file-pdf"/></svg></span>PDF e dispense consultabili direttamente nel browser</li>
+        <li><span class="feat-ic"><svg><use href="#i-audio"/></svg></span>Registrazioni audio e video con player integrato</li>
+        <li><span class="feat-ic"><svg><use href="#i-users"/></svg></span>Ogni studente può contribuire caricando materiale</li>
+      </ul>
+    </div>
+    <p class="hero-foot">&copy; <%= new Date().getFullYear() %> <%= uni.name %></p>
+  </section>
+
+  <section class="login-panel">
+    <div class="login-card">
+      <h2>Accedi</h2>
+      <p class="muted">Utilizza le tue credenziali istituzionali per entrare nella piattaforma.</p>
+
+      <% if (typeof loggedOut !== 'undefined' && loggedOut) { %>
+        <div class="flash flash-success">Disconnessione effettuata correttamente.</div>
+      <% } %>
+      <% if (error) { %>
+        <div class="flash flash-error"><%= error %></div>
+      <% } %>
+
+      <% if (authMode === 'dev') { %>
+        <div class="dev-banner">
+          <strong>Modalità sviluppo</strong>
+          Login simulato per test locali. In produzione questo modulo è sostituito dal Single Sign-On d'Ateneo.
+        </div>
+        <form action="/auth/dev" method="post" class="form">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <label>Email istituzionale
+            <input type="email" name="email" required placeholder="nome.cognome@studenti.ateneo.it" autocomplete="email">
+          </label>
+          <label>Nome e cognome
+            <input type="text" name="name" placeholder="Mario Rossi" autocomplete="name">
+          </label>
+          <button class="btn btn-primary btn-block" type="submit"><svg><use href="#i-lock"/></svg>Accedi (sviluppo)</button>
+        </form>
+      <% } else { %>
+        <a class="btn btn-primary btn-block btn-sso" href="/auth/login">
+          <svg class="sso-crest"><use href="#i-crest"/></svg>
+          Accedi con le credenziali d'Ateneo
+        </a>
+      <% } %>
+
+      <div class="privacy-note">
+        <svg><use href="#i-shield"/></svg>
+        <p>
+          <strong>La tua password resta all'Ateneo.</strong>
+          L'autenticazione avviene sul portale ufficiale di <%= uni.name %>: questa piattaforma
+          non riceve né conserva mai le tue credenziali, ma solo la conferma che sei iscritto/a,
+          con nome ed email istituzionale.
+        </p>
+      </div>
+    </div>
+  </section>
+</div>
+</body>
+</html>

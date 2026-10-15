@@ -1,0 +1,58 @@
+<%- include('partials/top') %>
+
+<a class="back-link" href="/courses/<%= file.course_id %>"><svg><use href="#i-arrow-left"/></svg><%= file.course_name %></a>
+
+<div class="file-layout">
+  <section class="panel viewer-panel">
+    <div class="viewer kind-<%= file.kind %>">
+      <% if (file.kind === 'pdf') { %>
+        <iframe src="/files/<%= file.id %>/view" title="<%= file.title %>"></iframe>
+      <% } else if (file.kind === 'image') { %>
+        <a href="/files/<%= file.id %>/view" target="_blank" rel="noopener"><img src="/files/<%= file.id %>/view" alt="<%= file.title %>"></a>
+      <% } else if (file.kind === 'audio') { %>
+        <div class="audio-card">
+          <div class="audio-art"><svg><use href="#i-audio"/></svg></div>
+          <strong><%= file.title %></strong>
+          <audio controls preload="metadata" src="/files/<%= file.id %>/view"></audio>
+        </div>
+      <% } else if (file.kind === 'video') { %>
+        <video controls preload="metadata" src="/files/<%= file.id %>/view"></video>
+      <% } else { %>
+        <div class="no-preview">
+          <svg><use href="#i-<%= kindInfo.icon %>"/></svg>
+          <p>Anteprima non disponibile per questo formato.</p>
+          <a class="btn btn-primary" href="/files/<%= file.id %>/download"><svg><use href="#i-download"/></svg>Scarica il file</a>
+        </div>
+      <% } %>
+    </div>
+  </section>
+
+  <aside class="panel file-details">
+    <span class="tag kind-<%= file.kind %>"><%= kindInfo.label %></span>
+    <h1><%= file.title %></h1>
+    <% if (file.description) { %><p class="file-desc"><%= file.description %></p><% } %>
+
+    <dl class="details">
+      <dt>Corso</dt><dd><a href="/courses/<%= file.course_id %>"><%= file.course_name %></a></dd>
+      <dt>Nome file</dt><dd class="break"><%= file.original_name %></dd>
+      <dt>Dimensione</dt><dd><%= formatBytes(file.size) %></dd>
+      <dt>Caricato da</dt><dd><%= file.uploader_name || 'utente rimosso' %></dd>
+      <dt>Data</dt><dd><%= formatDateTime(file.created_at) %></dd>
+    </dl>
+
+    <div class="stack">
+      <a class="btn btn-primary btn-block" href="/files/<%= file.id %>/download"><svg><use href="#i-download"/></svg>Scarica</a>
+      <% if (inline) { %>
+        <a class="btn btn-ghost btn-block" href="/files/<%= file.id %>/view" target="_blank" rel="noopener">Apri in una nuova scheda</a>
+      <% } %>
+      <% if (isAdmin) { %>
+        <form action="/files/<%= file.id %>/delete" method="post" data-confirm="Eliminare definitivamente «<%= file.title %>»?">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="btn btn-danger btn-block" type="submit"><svg><use href="#i-trash"/></svg>Elimina materiale</button>
+        </form>
+      <% } %>
+    </div>
+  </aside>
+</div>
+
+<%- include('partials/bottom') %>

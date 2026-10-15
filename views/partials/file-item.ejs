@@ -1,0 +1,36 @@
+<%
+  var k = KINDS[file.kind] || KINDS.other;
+  var showCourse = typeof withCourse !== 'undefined' && withCourse;
+  var backParam = typeof back !== 'undefined' ? back : '';
+%>
+<li class="file-item">
+  <a class="file-thumb kind-<%= file.kind %>" href="/files/<%= file.id %>" aria-hidden="true" tabindex="-1">
+    <% if (file.kind === 'image') { %>
+      <img src="/files/<%= file.id %>/view" alt="" loading="lazy">
+    <% } else { %>
+      <svg><use href="#i-<%= k.icon %>"/></svg>
+    <% } %>
+  </a>
+  <div class="file-body">
+    <a class="file-title" href="/files/<%= file.id %>"><%= file.title %></a>
+    <div class="file-meta">
+      <span class="tag kind-<%= file.kind %>"><%= k.label %></span>
+      <% if (showCourse) { %><a class="meta-link" href="/courses/<%= file.course_id %>"><%= file.course_name %></a><span class="dot">·</span><% } %>
+      <span><%= formatBytes(file.size) %></span>
+      <span class="dot">·</span>
+      <span><%= formatDate(file.created_at) %></span>
+      <span class="dot">·</span>
+      <span>di <%= file.uploader_name || 'utente rimosso' %></span>
+    </div>
+  </div>
+  <div class="file-actions">
+    <a class="icon-btn" href="/files/<%= file.id %>/download" title="Scarica" aria-label="Scarica <%= file.title %>"><svg><use href="#i-download"/></svg></a>
+    <% if (isAdmin) { %>
+      <form action="/files/<%= file.id %>/delete" method="post" data-confirm="Eliminare definitivamente «<%= file.title %>»?">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="back" value="<%= backParam %>">
+        <button class="icon-btn danger" type="submit" title="Elimina" aria-label="Elimina <%= file.title %>"><svg><use href="#i-trash"/></svg></button>
+      </form>
+    <% } %>
+  </div>
+</li>

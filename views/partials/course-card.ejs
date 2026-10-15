@@ -1,0 +1,14 @@
+<a class="course-card" href="/courses/<%= c.id %>">
+  <div class="course-cover cover-<%= c.color %>">
+    <span class="course-code"><%= c.code || 'CORSO' %></span>
+    <svg class="cover-ic"><use href="#i-book"/></svg>
+  </div>
+  <div class="course-info">
+    <h3><%= c.name %></h3>
+    <p class="muted"><%= c.teacher ? 'Prof. ' + c.teacher : 'Docente non indicato' %><%= c.year ? ' · ' + c.year : '' %></p>
+    <div class="course-foot">
+      <span><svg><use href="#i-folder"/></svg><%= c.file_count %> <%= c.file_count === 1 ? 'materiale' : 'materiali' %></span>
+      <% if (c.last_upload) { %><span class="muted">agg. <%= formatDate(c.last_upload) %></span><% } %>
+    </div>
+  </div>
+</a>

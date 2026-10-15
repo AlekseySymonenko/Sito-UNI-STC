@@ -1,0 +1,38 @@
+<%- include('partials/top') %>
+
+<div class="page-head">
+  <div>
+    <p class="eyebrow">Ricerca</p>
+    <h1>Cerca materiali</h1>
+    <p class="muted">Cerca per titolo, descrizione, nome del file o corso.</p>
+  </div>
+</div>
+
+<form class="filter-bar" method="get" action="/search">
+  <div class="input-ic grow">
+    <svg><use href="#i-search"/></svg>
+    <input type="search" name="q" value="<%= q %>" placeholder="Es. integrali, lezione 5, laboratorio…" autofocus>
+  </div>
+  <select name="kind" aria-label="Tipo di file">
+    <option value="">Tutti i tipi</option>
+    <% Object.keys(KINDS).forEach(function (k) { %>
+      <option value="<%= k %>" <%= kind === k ? 'selected' : '' %>><%= KINDS[k].plural %></option>
+    <% }) %>
+  </select>
+  <button class="btn btn-primary" type="submit">Cerca</button>
+</form>
+
+<section class="panel">
+  <% if (!q) { %>
+    <div class="empty"><svg><use href="#i-search"/></svg><p>Inserisci una parola chiave per iniziare.</p></div>
+  <% } else if (files.length === 0) { %>
+    <div class="empty"><svg><use href="#i-search"/></svg><p>Nessun risultato per «<%= q %>».</p></div>
+  <% } else { %>
+    <p class="muted small results-count"><%= files.length %> risultat<%= files.length === 1 ? 'o' : 'i' %> per «<%= q %>»</p>
+    <ul class="file-list">
+      <% files.forEach(function (file) { %><%- include('partials/file-item', { file: file, withCourse: true }) %><% }) %>
+    </ul>
+  <% } %>
+</section>
+
+<%- include('partials/bottom') %>

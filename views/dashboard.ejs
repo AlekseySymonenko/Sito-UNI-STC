@@ -1,0 +1,56 @@
+<%- include('partials/top') %>
+
+<section class="welcome">
+  <div>
+    <p class="eyebrow">Bentornato/a</p>
+    <h1><%= user.name.split(' ')[0] %>, cosa studiamo oggi?</h1>
+    <p class="muted">Consulta i materiali dei corsi o condividi i tuoi appunti con i colleghi.</p>
+  </div>
+  <div class="welcome-actions">
+    <a class="btn btn-primary" href="/courses"><svg><use href="#i-book"/></svg>Sfoglia i corsi</a>
+    <a class="btn btn-ghost" href="/courses/new"><svg><use href="#i-plus"/></svg>Nuovo corso</a>
+  </div>
+</section>
+
+<section class="stats">
+  <div class="stat"><span class="stat-ic"><svg><use href="#i-book"/></svg></span><div><strong><%= stats.courses %></strong><small>Corsi</small></div></div>
+  <div class="stat"><span class="stat-ic"><svg><use href="#i-folder"/></svg></span><div><strong><%= stats.files %></strong><small>Materiali</small></div></div>
+  <div class="stat"><span class="stat-ic"><svg><use href="#i-users"/></svg></span><div><strong><%= stats.users %></strong><small>Studenti iscritti</small></div></div>
+  <div class="stat"><span class="stat-ic"><svg><use href="#i-upload"/></svg></span><div><strong><%= myCount %></strong><small>I tuoi contributi</small></div></div>
+</section>
+
+<div class="two-col">
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Corsi attivi</h2>
+      <a class="link" href="/courses">Tutti i corsi →</a>
+    </div>
+    <% if (courses.length === 0) { %>
+      <div class="empty">
+        <svg><use href="#i-book"/></svg>
+        <p>Non ci sono ancora corsi.</p>
+        <a class="btn btn-primary" href="/courses/new"><svg><use href="#i-plus"/></svg>Crea il primo corso</a>
+      </div>
+    <% } else { %>
+      <div class="course-grid compact">
+        <% courses.forEach(function (c) { %><%- include('partials/course-card', { c: c }) %><% }) %>
+      </div>
+    <% } %>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Caricati di recente</h2>
+      <a class="link" href="/search">Cerca →</a>
+    </div>
+    <% if (recent.length === 0) { %>
+      <div class="empty small"><svg><use href="#i-clock"/></svg><p>Nessun materiale caricato finora.</p></div>
+    <% } else { %>
+      <ul class="file-list dense">
+        <% recent.forEach(function (file) { %><%- include('partials/file-item', { file: file, withCourse: true }) %><% }) %>
+      </ul>
+    <% } %>
+  </section>
+</div>
+
+<%- include('partials/bottom') %>

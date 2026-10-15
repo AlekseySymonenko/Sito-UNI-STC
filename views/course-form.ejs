@@ -1,0 +1,37 @@
+<%- include('partials/top') %>
+
+<a class="back-link" href="<%= course.id ? '/courses/' + course.id : '/courses' %>"><svg><use href="#i-arrow-left"/></svg>Indietro</a>
+
+<div class="panel form-panel">
+  <h1><%= title %></h1>
+  <p class="muted"><%= course.id ? 'Aggiorna le informazioni dell\'insegnamento.' : 'Aggiungi un insegnamento per raccogliere i relativi materiali.' %></p>
+
+  <% if (error) { %><div class="flash flash-error"><%= error %></div><% } %>
+
+  <form action="<%= action %>" method="post" class="form">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label>Nome dell'insegnamento *
+      <input type="text" name="name" required maxlength="140" value="<%= course.name || '' %>" placeholder="Analisi Matematica I">
+    </label>
+    <div class="form-row">
+      <label>Codice
+        <input type="text" name="code" maxlength="30" value="<%= course.code || '' %>" placeholder="MAT-101">
+      </label>
+      <label>Anno accademico
+        <input type="text" name="year" maxlength="30" value="<%= course.year || '' %>" placeholder="2026/2027">
+      </label>
+    </div>
+    <label>Docente
+      <input type="text" name="teacher" maxlength="120" value="<%= course.teacher || '' %>" placeholder="Nome Cognome">
+    </label>
+    <label>Descrizione
+      <textarea name="description" rows="4" maxlength="2000" placeholder="Breve descrizione del corso, programma, orari…"><%= course.description || '' %></textarea>
+    </label>
+    <div class="form-actions">
+      <a class="btn btn-ghost" href="<%= course.id ? '/courses/' + course.id : '/courses' %>">Annulla</a>
+      <button class="btn btn-primary" type="submit"><%= course.id ? 'Salva modifiche' : 'Crea corso' %></button>
+    </div>
+  </form>
+</div>
+
+<%- include('partials/bottom') %>

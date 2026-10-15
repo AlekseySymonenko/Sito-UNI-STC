@@ -1,0 +1,33 @@
+{
+  "name": "sito-uni-stc",
+  "version": "1.0.0",
+  "description": "Piattaforma e-learning d'Ateneo con accesso SSO, caricamento materiali e ruoli amministratore",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/server.js",
+    "dev": "node --disable-warning=ExperimentalWarning --watch src/server.js",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AlekseySymonenko/Sito-UNI-STC.git"
+  },
+  "author": "",
+  "license": "UNLICENSED",
+  "bugs": {
+    "url": "https://github.com/AlekseySymonenko/Sito-UNI-STC/issues"
+  },
+  "homepage": "https://github.com/AlekseySymonenko/Sito-UNI-STC#readme",
+  "dependencies": {
+    "ejs": "^7.0.1",
+    "express": "^5.3.0",
+    "express-session": "^1.19.0",
+    "helmet": "^8.3.0",
+    "multer": "^2.4.0",
+    "openid-client": "^5.7.1"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=22.13"
+  }
+}
