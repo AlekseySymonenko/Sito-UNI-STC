@@ -447,3 +447,19 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: color-m
   .panel { padding: 16px; }
   .table-wrap { margin: 0 -16px; }
 }
+
+/* ---------- Versione statica (GitHub Pages + Supabase) ---------- */
+.boot { min-height: 50vh; display: grid; place-items: center; }
+#app > .boot { min-height: 100vh; }
+.spinner { width: 38px; height: 38px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--primary); animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.toast-stack { position: fixed; z-index: 100; right: 16px; bottom: 16px; display: grid; gap: 10px; max-width: min(420px, calc(100vw - 32px)); }
+.toast-stack .flash { margin: 0; box-shadow: var(--shadow-lg); animation: toast-in .2s ease; transition: opacity .4s, transform .4s; }
+.toast-stack .flash.out { opacity: 0; transform: translateY(8px); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
+.demo-bar { position: fixed; z-index: 90; left: 50%; bottom: 14px; transform: translateX(-50%); background: var(--ink); color: #fff; font-size: .78rem; padding: 7px 14px; border-radius: 99px; box-shadow: var(--shadow-lg); max-width: calc(100vw - 32px); text-align: center; }
+.login-grid { background: var(--bg); }
+.btn-sso .google-g { width: 22px; height: 22px; background: #fff; border-radius: 50%; padding: 2px; }
+.selected-files li.bad { background: var(--err-soft); color: var(--err); }
+.selected-files li.bad .muted { color: var(--err); }
+.error-card .error-code { font-size: 3rem; }

@@ -1,156 +1,89 @@
 # Sito per studenti da studenti per condividere appunti
 
-Piattaforma web in stile e-learning universitario per condividere i materiali dei corsi:
+Piattaforma in stile e-learning universitario per condividere i materiali dei corsi:
 **PDF, immagini, audio, video e documenti** (slide, dispense, appunti).
 
-- 🔐 **Accesso con le credenziali d'Ateneo** tramite Single Sign-On: la piattaforma
-  **non riceve e non salva mai le password**. Serve solo a verificare che l'utente
-  sia uno studente dell'Ateneo (dominio email istituzionale + IdP dell'Ateneo).
-- ⬆️ **Tutti gli studenti** autenticati possono creare corsi e caricare file
-  (drag & drop, più file insieme, barra di avanzamento).
-- 🗑️ **Solo gli amministratori** possono eliminare file e corsi o modificarli.
-- 🛡️ **Pannello di amministrazione** per assegnare/revocare il ruolo di amministratore,
-  con registro delle attività (caricamenti, eliminazioni, cambi di ruolo, accessi rifiutati).
-- 👀 Anteprima integrata: visualizzatore PDF, immagini, player audio e video.
-- 🔎 Ricerca per titolo, descrizione, nome file o corso e filtri per tipo.
-- 📱 Interfaccia responsive, colori e nome dell'Ateneo personalizzabili.
+- 🔐 Accesso **solo con l'account Google @campus.unimib.it**: il sito non vede né salva password.
+- ⬆️ **Tutti gli studenti** possono creare corsi e caricare file.
+- 🗑️ **Solo gli amministratori** possono eliminare file e corsi (o modificarli).
+- 🛡️ Pagina **Amministrazione** per nominare altri amministratori, con registro delle attività.
+- 💶 **Costo: 0 €.** Pagine su GitHub Pages, login/dati/file su Supabase (piano gratuito).
 
-## 🎓 Guida rapida: pubblicare il sito per la Bicocca (anche da iPad)
+> **Gli studenti non devono usare GitHub.** Per loro è un normale sito: aprono il link,
+> premono «Accedi con l'account @campus.unimib.it» e basta. GitHub e Supabase servono solo
+> a chi gestisce il sito, e si configurano **una volta sola** (da iPad va benissimo).
 
-Configurazione già pronta: entrano **solo** gli account Google `@campus.unimib.it`
-(verificati da Google con il claim firmato `hd`, non solo dall'indirizzo email).
+---
 
-### 1 · Creare le "chiavi" di accesso Google (gratis)
-1. Vai su <https://console.cloud.google.com> ed entra con un tuo account Google.
-2. Crea un nuovo progetto (es. `elearning-bicocca`).
-3. **API e servizi → Schermata consenso OAuth** (o *Google Auth Platform*):
-   tipo utente **Esterno**, nome app, email di supporto; ambiti: `openid`, `email`, `profile`.
-   Al termine premi **Pubblica app** (altrimenti entrano solo gli utenti di test).
-4. **Credenziali → Crea credenziali → ID client OAuth → Applicazione web**.
-   In *URI di reindirizzamento autorizzati* inserisci:
-   `https://<nome-del-sito>.onrender.com/auth/callback`
-5. Copia **ID client** e **Client secret**.
+## Configurazione (una volta sola, circa 30 minuti)
 
-### 2 · Pubblicare su Render
-1. Vai su <https://render.com>, accedi con GitHub.
-2. **New → Blueprint** e scegli questo repository: Render legge `render.yaml`.
-3. Compila le 4 voci richieste:
-   - `OIDC_CLIENT_ID` e `OIDC_CLIENT_SECRET`: quelli del punto 1
-   - `OIDC_REDIRECT_URI`: `https://<nome-del-sito>.onrender.com/auth/callback`
-   - `ADMIN_EMAILS`: la tua email `@campus.unimib.it` (diventi amministratore)
-4. Conferma. Dopo qualche minuto il sito è online all'indirizzo `https://<nome-del-sito>.onrender.com`.
+### Passo 1 · Pubblicare il sito su GitHub Pages
+1. In questo repository: **Settings → Pages**.
+2. In *Build and deployment*: Source **Deploy from a branch**, poi scegli il ramo
+   `claude/elearning-university-auth-dep8hk` e la cartella **`/docs`** → **Save**.
+3. Dopo 1–2 minuti il sito è online su `https://alekseysymonenko.github.io/Sito-UNI-STC/`.
 
-Se l'indirizzo assegnato da Render è diverso da quello previsto, aggiorna sia
-`OIDC_REDIRECT_URI` su Render sia l'URI di reindirizzamento su Google.
+Finché il passo 2 non è completato il sito funziona in **modalità anteprima** (dati di esempio).
 
-> Se al login Google mostra un errore del tipo "app bloccata dall'amministratore",
-> significa che l'Ateneo blocca le app esterne sugli account campus: in quel caso
-> si passa all'accesso tramite link via email istituzionale.
+### Passo 2 · Creare il progetto Supabase (gratis, senza carta di credito)
+1. Vai su <https://supabase.com> → **Start your project** → accedi con GitHub.
+2. **New project**: nome `elearning-bicocca`, scegli una password per il database
+   (salvala, non servirà al sito), regione **Central EU (Frankfurt)** → **Create**.
+3. Quando è pronto: menu a sinistra **SQL Editor** → **New query** → incolla tutto il contenuto
+   del file [`supabase/setup.sql`](supabase/setup.sql) → **Run**. Deve comparire "Success".
+4. Pulsante **Connect** in alto (oppure *Project Settings → API*): copia
+   **Project URL** e **anon public key**. *(Non usare mai la chiave "service_role/secret".)*
 
-## Requisiti
+### Passo 3 · Attivare il login con Google
+1. Vai su <https://console.cloud.google.com> e crea un progetto (es. `elearning-bicocca`).
+2. **API e servizi → Schermata consenso OAuth**: tipo **Esterno**, nome app, email di supporto,
+   poi **Pubblica app**.
+3. **Credenziali → Crea credenziali → ID client OAuth → Applicazione web**:
+   - *Origini JavaScript autorizzate*: `https://alekseysymonenko.github.io`
+   - *URI di reindirizzamento autorizzati*: `https://<il-tuo-progetto>.supabase.co/auth/v1/callback`
+     (lo trovi già scritto su Supabase in *Authentication → Sign In / Providers → Google*)
+4. Copia **ID client** e **Client secret**.
+5. Su Supabase: **Authentication → Sign In / Providers → Google** → attiva, incolla ID e secret → **Save**.
+6. Su Supabase: **Authentication → URL Configuration**:
+   - *Site URL*: `https://alekseysymonenko.github.io/Sito-UNI-STC/`
+   - *Redirect URLs*: aggiungi `https://alekseysymonenko.github.io/Sito-UNI-STC/`
 
-- Node.js **22.13 o superiore** (usa il modulo integrato `node:sqlite`, nessuna dipendenza nativa)
+### Passo 4 · Collegare il sito a Supabase
+Apri il file [`docs/config.js`](docs/config.js), tocca la matita ✏️ e incolla
+**Project URL** e **anon public key** tra le virgolette di `supabaseUrl` e `supabaseAnonKey`
+→ **Commit changes**. Dopo un minuto il sito è collegato.
 
-## Avvio rapido (sviluppo)
+### Passo 5 · Diventare amministratore
+**La prima persona che accede diventa automaticamente amministratore**: entra subito tu.
+Poi dalla pagina **Amministrazione** puoi nominare altri amministratori.
 
-```bash
-npm install
-npm run dev
+---
+
+## Limiti del piano gratuito
+- Spazio per i file: circa **1 GB** in totale; ogni file al massimo **50 MB**.
+- Se nessuno usa il sito per **7 giorni**, Supabase mette in pausa il progetto: i dati restano,
+  si riattiva con un clic dalla dashboard di Supabase.
+- Lo spazio usato è visibile nella pagina **Amministrazione**.
+
+## Domande frequenti
+**Google dice "app bloccata" o "accesso negato"?** L'Ateneo potrebbe bloccare le app esterne
+sugli account campus. Si può passare all'accesso con link via email istituzionale.
+
+**Un utente con Gmail personale può entrare?** No: il database rifiuta qualunque account che non
+sia `@campus.unimib.it`, anche se qualcuno modificasse il sito.
+
+**Cambiare nome, testo a piè di pagina o limite dei file?** Sono tutti in `docs/config.js`.
+
+---
+
+## Per chi sviluppa
 ```
-
-Apri <http://localhost:3000>. In sviluppo è attiva la modalità `AUTH_MODE=dev`, che mostra un
-login simulato (basta un'email). Per diventare subito amministratore:
-
-```bash
-ADMIN_EMAILS=tuo.nome@studenti.ateneo.it npm run dev
+docs/            il sito (HTML, CSS, JavaScript) pubblicato da GitHub Pages
+  config.js      impostazioni
+  js/api.js      accesso a Supabase (+ modalità anteprima)
+  js/app.js      pagine e interfaccia
+supabase/
+  setup.sql      tabelle, permessi (Row Level Security) e archivio file
+  tests/         test dei permessi su PostgreSQL locale: sh supabase/tests/run.sh
 ```
-
-Test automatici: `npm test`.
-
-## Messa in produzione
-
-1. Copia `.env.example` in `.env` e compila i valori.
-2. Registra l'applicazione presso l'Identity Provider dell'Ateneo (vedi sotto).
-3. Avvia con `npm start` dietro un reverse proxy HTTPS (nginx/Apache) con `TRUST_PROXY=true`.
-
-In produzione (`NODE_ENV=production`) l'avvio fallisce volutamente se manca
-`SESSION_SECRET`, se `ALLOWED_EMAIL_DOMAINS` è vuoto o se si tenta di usare `AUTH_MODE=dev`.
-
-I dati (database SQLite e file caricati) stanno in `DATA_DIR` (default `./data`): è l'unica
-cartella da includere nei backup.
-
-## Come funziona l'accesso con le credenziali d'Ateneo
-
-L'utente clicca **«Accedi con le credenziali d'Ateneo»** e viene reindirizzato alla pagina di
-login **ufficiale dell'Ateneo**. Dopo l'autenticazione l'IdP rimanda alla piattaforma
-un'asserzione **firmata** contenente solo identificativo, nome ed email istituzionale.
-La piattaforma:
-
-1. verifica firma, `state`, `nonce` e PKCE (OpenID Connect, Authorization Code Flow);
-2. controlla che l'email appartenga a uno dei domini in `ALLOWED_EMAIL_DOMAINS`;
-3. (opzionale) controlla un attributo aggiuntivo, es. `eduPersonAffiliation = student`;
-4. crea/aggiorna il profilo (nessuna password) e apre la sessione.
-
-### Opzione A — OpenID Connect (consigliata)
-
-Funziona con qualunque IdP OIDC. Esempi tipici negli atenei italiani:
-
-| IdP | `OIDC_ISSUER` |
-| --- | --- |
-| Microsoft Entra ID (Office 365 d'Ateneo) | `https://login.microsoftonline.com/<TENANT_ID>/v2.0` |
-| Google Workspace for Education | `https://accounts.google.com` |
-| Keycloak / IdP d'Ateneo | `https://idp.ateneo.it/realms/<realm>` |
-
-Registra un'applicazione con redirect URI `https://<tuo-dominio>/auth/callback`, poi imposta
-`OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` e `OIDC_REDIRECT_URI`.
-Con Microsoft Entra usa sempre l'issuer **del tenant dell'Ateneo** (non `common`), così solo
-gli account dell'Ateneo possono autenticarsi.
-
-### Opzione B — SAML / Shibboleth (federazione IDEM)
-
-Se l'Ateneo offre solo SAML, metti davanti all'app un Service Provider (es. Apache +
-`mod_shib`) che protegga la rotta `/auth/sso` e passi gli attributi come header, poi imposta
-`AUTH_MODE=header` (vedi `AUTH_HEADER_*` in `.env.example`).
-⚠️ In questa modalità l'app **non deve essere raggiungibile direttamente**, solo tramite lo SP.
-
-## Ruoli
-
-| Azione | Studente | Amministratore |
-| --- | :---: | :---: |
-| Consultare e scaricare materiali | ✅ | ✅ |
-| Caricare file | ✅ | ✅ |
-| Creare corsi | ✅ | ✅ |
-| Modificare corsi | — | ✅ |
-| Eliminare file e corsi | — | ✅ |
-| Assegnare / revocare il ruolo di amministratore | — | ✅ |
-
-- I primi amministratori si definiscono con `ADMIN_EMAILS` (diventano admin al loro accesso).
-- Dopo, dal menu **Amministrazione → Utenti e ruoli** si può rendere amministratore qualunque
-  utente che abbia effettuato almeno un accesso, oppure revocare il ruolo.
-- Non è possibile rimuovere l'ultimo amministratore.
-- I permessi sono verificati **lato server** su ogni richiesta: nascondere i pulsanti non è
-  l'unica protezione.
-
-## Sicurezza
-
-- Nessuna password memorizzata; sessioni su cookie `HttpOnly`, `SameSite=Lax`, `Secure` in produzione.
-- Protezione CSRF su tutte le operazioni di modifica.
-- Content Security Policy restrittiva (nessuno script inline).
-- Upload: elenco di estensioni ammesse (niente HTML/SVG/eseguibili), nomi su disco casuali,
-  tipo MIME deciso dal server, `X-Content-Type-Options: nosniff`, contenuti multimediali
-  serviti in sandbox, limite di dimensione configurabile.
-- I file sono accessibili solo agli utenti autenticati.
-
-## Struttura
-
-```
-src/
-  server.js        avvio Express, sicurezza, sessioni
-  config.js        configurazione da variabili d'ambiente
-  auth.js          SSO d'Ateneo (OIDC / SAML via header / dev)
-  db.js            schema e query SQLite
-  routes/          corsi e caricamenti, file, amministrazione
-views/             template EJS
-public/            CSS, JavaScript, immagini
-test/              test automatici (node:test)
-```
+I permessi sono imposti dal database (Row Level Security), non dall'interfaccia.
