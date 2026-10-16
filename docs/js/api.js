@@ -95,7 +95,10 @@
           headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + session.access_token, apikey: CFG.supabaseAnonKey },
           body: JSON.stringify(body),
         });
-      } catch (e) { throw new Error('Connessione assente o instabile. Riprova.'); }
+      } catch (e) {
+        throw new Error(navigator.onLine === false ? 'Connessione assente. Riprova.'
+          : 'Impossibile contattare l\'archivio (funzione "b2" su Supabase non raggiungibile: controlla che esista con questo nome e che "Verify JWT" sia disattivato).');
+      }
       var data = await res.json().catch(function () { return {}; });
       if (res.status === 404) throw new Error('Archivio B2 non ancora installato (funzione "b2" mancante su Supabase).');
       if (!res.ok) throw new Error(data.error || 'Errore dell\'archivio (' + res.status + ').');
