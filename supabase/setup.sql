@@ -50,6 +50,18 @@ create table if not exists public.files (
   created_at    timestamptz not null default now()
 );
 create index if not exists files_course_idx on public.files(course_id);
+
+-- Corso di laurea e anno di corso (triennale: 1°–3°, magistrale: 1°–2°; vuoti = da assegnare)
+alter table public.courses add column if not exists degree text;
+alter table public.courses add column if not exists study_year smallint;
+do $$ begin
+  alter table public.courses add constraint courses_degree_year_check check (
+    case when degree is null then study_year is null
+         when degree = 'triennale' then coalesce(study_year between 1 and 3, false)
+         when degree = 'magistrale' then coalesce(study_year between 1 and 2, false)
+         else false end);
+exception when duplicate_object then null;
+end $$;
 create index if not exists files_uploader_idx on public.files(uploaded_by);
 
 -- Dove si trova il file: archivio Supabase oppure Backblaze B2 (aggiunto in seguito)

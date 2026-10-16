@@ -39,6 +39,14 @@ select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000
 insert into courses (name, code) values ('Chimica Organica I', 'CHI-101');
 select pg_temp.expect((select count(*) from courses) = 1, 'studente crea e vede un corso');
 select pg_temp.expect((select created_by from courses limit 1) = auth.uid(), 'created_by impostato dal server');
+insert into courses (name, degree, study_year) values ('Chimica Inorganica 1', 'triennale', 1);
+select pg_temp.expect_error($q$insert into courses (name, degree, study_year) values ('X', 'magistrale', 3)$q$, 'magistrale ha solo 2 anni');
+select pg_temp.expect_error($q$insert into courses (name, degree, study_year) values ('X', 'triennale', null)$q$, 'laurea senza anno rifiutata');
+update courses set study_year = 2 where name = 'Chimica Inorganica 1';
+select pg_temp.expect((select study_year from courses where name = 'Chimica Inorganica 1') = 1, 'studente NON sposta i corsi');
+reset role;
+delete from courses where name = 'Chimica Inorganica 1';
+set role authenticated;
 
 insert into files (course_id, title, original_name, storage_path, mime, kind, size)
 values ((select id from courses limit 1), 'Lezione 1', 'lezione1.pdf', '00000000-0000-0000-0000-00000000000b/a.pdf', 'application/pdf', 'pdf', 1000);
@@ -133,6 +141,8 @@ select set_role('00000000-0000-0000-0000-00000000000b', 'admin');
 select pg_temp.expect((select role from profiles where email = 'n.cognome@campus.unimib.it') = 'admin', 'admin assegna il ruolo');
 select set_role('00000000-0000-0000-0000-00000000000b', 'student');
 select pg_temp.expect_error($q$select set_role('00000000-0000-0000-0000-00000000000a', 'student')$q$, 'non si rimuove l''ultimo admin');
+update courses set degree = 'magistrale', study_year = 2;
+select pg_temp.expect((select degree || study_year from courses limit 1) = 'magistrale2', 'admin sposta il corso');
 update courses set description = 'Aggiornato';
 select pg_temp.expect((select description from courses limit 1) = 'Aggiornato', 'admin modifica il corso');
 delete from storage.objects;

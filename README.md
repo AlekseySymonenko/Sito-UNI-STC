@@ -98,6 +98,13 @@ I numeri si cambiano dallo SQL Editor di Supabase, per esempio:
 `update app_settings set value = '30' where key = 'evict_grace_days';`
 (chiavi: `b2_quota_bytes`, `evict_grace_days`, `evict_window_days`).
 
+## Corsi per laurea e anno
+
+La pagina *Corsi* è divisa in **Laurea Triennale** (1°–3° anno) e **Laurea Magistrale** (1°–2° anno);
+i corsi senza collocazione stanno in **Da assegnare**. Chi crea un corso sceglie laurea e anno;
+gli amministratori possono **spostare** un corso in qualsiasi momento dal menu sotto la sua scheda
+(o nella pagina del corso).
+
 ## Classifica e moderazione
 
 **Classifica a leghe** (menu *Classifica*): Ferro, Bronzo, Argento, Oro, Platino, Smeraldo e

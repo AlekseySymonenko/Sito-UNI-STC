@@ -4,7 +4,7 @@
 
   // Versione del sito: deve coincidere con data-v in index.html. Se Safari ha in
   // memoria una pagina principale vecchia, la ricarichiamo (una volta) aggirando la cache.
-  var VERSION = '20261016h';
+  var VERSION = '20261016i';
   if (document.documentElement.getAttribute('data-v') !== VERSION) {
     var tried = false;
     try { tried = sessionStorage.getItem('reload-v') === VERSION; sessionStorage.setItem('reload-v', VERSION); } catch (e) { /* ignora */ }
@@ -141,6 +141,36 @@
     return '<div class="empty">' + icon(ic) + '<p>' + text + '</p>' + (action || '') + '</div>';
   }
 
+  // Collocazione dei corsi: laurea triennale (3 anni) e magistrale (2 anni)
+  var DEGREES = [
+    { key: 'triennale', label: 'Triennale', years: [1, 2, 3] },
+    { key: 'magistrale', label: 'Magistrale', years: [1, 2] },
+  ];
+  function placementOf(c) { return c.degree && c.study_year ? c.degree + ':' + c.study_year : ''; }
+  function placementLabel(v) {
+    if (!v) return 'Da assegnare';
+    var p = v.split(':');
+    return (p[0] === 'magistrale' ? 'Magistrale' : 'Triennale') + ' · ' + p[1] + '° anno';
+  }
+  function placementOptions(selected) {
+    var opts = [];
+    DEGREES.forEach(function (d) {
+      d.years.forEach(function (y) {
+        var v = d.key + ':' + y;
+        opts.push('<option value="' + v + '"' + (v === selected ? ' selected' : '') + '>' + placementLabel(v) + '</option>');
+      });
+    });
+    opts.push('<option value=""' + (!selected ? ' selected' : '') + '>Da assegnare</option>');
+    return opts.join('');
+  }
+  function moveSelect(c, extraClass) {
+    return '<label class="move-select ' + (extraClass || '') + '" title="Sposta il corso">' + icon('folder') +
+      '<span class="sr-only">Sposta in</span><select data-move="' + c.id + '">' + placementOptions(placementOf(c)) + '</select></label>';
+  }
+  function courseItem(c) {
+    return '<div class="course-item">' + courseCard(c) + (isAdmin() ? moveSelect(c) : '') + '</div>';
+  }
+
   function courseCard(c) {
     return '<a class="course-card" href="#/corso/' + c.id + '">' +
       '<div class="course-cover cover-' + (c.color % 8) + '"><span class="course-code">' + esc(c.code || 'CORSO') + '</span>' +
@@ -250,22 +280,59 @@
   async function coursesPage(params) {
     loading('courses');
     var q = (params.get('q') || '').toLowerCase();
-    var courses = (await Api.listCourses()).filter(function (c) {
-      return !q || [c.name, c.code, c.teacher].some(function (v) { return (v || '').toLowerCase().indexOf(q) >= 0; });
-    });
-    render('courses',
-      '<div class="page-head"><div><p class="eyebrow">Catalogo</p><h1>Corsi</h1>' +
-        '<p class="muted">Scegli un insegnamento per consultarne i materiali o contribuire.</p></div>' +
-        '<a class="btn btn-primary" href="#/nuovo-corso">' + icon('plus') + 'Nuovo corso</a></div>' +
+    var all = await Api.listCourses();
+    var unassigned = all.filter(function (c) { return !placementOf(c); });
+    var view = params.get('laurea');
+    if (['triennale', 'magistrale', 'da-assegnare'].indexOf(view) < 0) view = 'triennale';
+    if (view === 'da-assegnare' && !unassigned.length) view = 'triennale';
+    var count = function (deg) { return all.filter(function (c) { return c.degree === deg; }).length; };
+
+    var head = '<div class="page-head"><div><p class="eyebrow">Catalogo</p><h1>Corsi</h1>' +
+      '<p class="muted">Scegli un insegnamento per consultarne i materiali o contribuire.</p></div>' +
+      '<a class="btn btn-primary" href="#/nuovo-corso' + (view !== 'da-assegnare' ? '?posto=' + view + ':1' : '') + '">' + icon('plus') + 'Nuovo corso</a></div>' +
       '<form class="filter-bar" data-form="filter-courses"><div class="input-ic">' + icon('search') +
-        '<input type="search" name="q" value="' + esc(params.get('q') || '') + '" placeholder="Filtra per nome, codice o docente"></div>' +
-        '<button class="btn btn-ghost" type="submit">Filtra</button></form>' +
-      (courses.length ? '<div class="course-grid">' + courses.map(courseCard).join('') + '</div>'
-        : '<div class="panel">' + empty('book', q ? 'Nessun corso corrisponde alla ricerca.' : 'Non ci sono ancora corsi.',
-          '<a class="btn btn-primary" href="#/nuovo-corso">' + icon('plus') + 'Crea un corso</a>') + '</div>'), 'Corsi');
+      '<input type="search" name="q" value="' + esc(params.get('q') || '') + '" placeholder="Cerca un corso per nome, codice o docente"></div>' +
+      '<button class="btn btn-ghost" type="submit">Cerca</button></form>';
+
+    var body;
+    if (q) {
+      var found = all.filter(function (c) {
+        return [c.name, c.code, c.teacher].some(function (v) { return (v || '').toLowerCase().indexOf(q) >= 0; });
+      });
+      body = found.length
+        ? '<p class="muted small results-count">' + found.length + ' cors' + (found.length === 1 ? 'o' : 'i') + ' trovat' + (found.length === 1 ? 'o' : 'i') + ' · <a href="#/corsi">mostra tutti</a></p>' +
+          '<div class="course-grid">' + found.map(function (c) { return courseItem(c); }).join('') + '</div>'
+        : '<div class="panel">' + empty('book', 'Nessun corso corrisponde alla ricerca.') + '</div>';
+    } else if (!all.length) {
+      body = '<div class="panel">' + empty('book', 'Non ci sono ancora corsi.', '<a class="btn btn-primary" href="#/nuovo-corso">' + icon('plus') + 'Crea il primo corso</a>') + '</div>';
+    } else {
+      var seg = '<nav class="degree-tabs" aria-label="Corso di laurea">' +
+        DEGREES.map(function (d) {
+          return '<a href="#/corsi?laurea=' + d.key + '" class="' + (view === d.key ? 'active' : '') + '">' +
+            '<strong>Laurea ' + d.label + '</strong><span>' + count(d.key) + ' cors' + (count(d.key) === 1 ? 'o' : 'i') + '</span></a>';
+        }).join('') +
+        (unassigned.length ? '<a href="#/corsi?laurea=da-assegnare" class="unassigned ' + (view === 'da-assegnare' ? 'active' : '') + '"><strong>Da assegnare</strong><span>' + unassigned.length + '</span></a>' : '') +
+        '</nav>';
+      if (view === 'da-assegnare') {
+        body = seg + '<section class="year-section"><div class="year-head"><h2>Corsi da assegnare</h2>' +
+          (isAdmin() ? '<span class="muted small">Usa il menu sotto ogni corso per spostarlo nell\'anno giusto</span>' : '') + '</div>' +
+          '<div class="course-grid">' + unassigned.map(courseItem).join('') + '</div></section>';
+      } else {
+        var deg = DEGREES.filter(function (d) { return d.key === view; })[0];
+        body = seg + deg.years.map(function (y) {
+          var list = all.filter(function (c) { return c.degree === deg.key && Number(c.study_year) === y; });
+          return '<section class="year-section"><div class="year-head"><h2><span class="year-badge">' + y + '°</span> anno</h2>' +
+            '<span class="muted small">' + list.length + ' cors' + (list.length === 1 ? 'o' : 'i') + '</span>' +
+            '<a class="btn btn-ghost btn-sm year-add" href="#/nuovo-corso?posto=' + deg.key + ':' + y + '">' + icon('plus') + 'Aggiungi</a></div>' +
+            (list.length ? '<div class="course-grid">' + list.map(courseItem).join('') + '</div>'
+              : '<p class="year-empty muted small">Nessun corso in questo anno.</p>') + '</section>';
+        }).join('');
+      }
+    }
+    render('courses', head + body, 'Corsi');
   }
 
-  async function courseFormPage(id) {
+  async function courseFormPage(id, params) {
     var course = {};
     if (id) {
       if (!isAdmin()) return errorPage('Accesso negato', 'Solo gli amministratori possono modificare i corsi.');
@@ -283,6 +350,8 @@
         '<p class="muted">' + (id ? 'Aggiorna le informazioni dell\'insegnamento.' : 'Aggiungi un insegnamento per raccogliere i relativi materiali.') + '</p>' +
         '<form class="form" data-form="course" data-id="' + (id || '') + '">' +
           field('Nome dell\'insegnamento *', 'name', 140, 'Chimica Organica I', true) +
+          '<label>Corso di laurea e anno *<select name="placement">' +
+            placementOptions(id ? placementOf(course) : ((params && params.get('posto')) || '')) + '</select></label>' +
           '<div class="form-row">' + field('Codice', 'code', 30, 'CHI-201') + field('Anno accademico', 'year', 30, '2026/2027') + '</div>' +
           field('Docente', 'teacher', 120, 'Nome Cognome') +
           '<label>Descrizione<textarea name="description" rows="4" maxlength="2000" placeholder="Programma, orari, note…">' + esc(course.description || '') + '</textarea></label>' +
@@ -309,14 +378,15 @@
       return '<a href="#/corso/' + id + qs({ tipo: k, q: q }) + '" class="' + (kind === k ? 'active' : '') + '">' + label + ' <span>' + n + '</span></a>';
     };
     render('courses',
-      '<a class="back-link" href="#/corsi">' + icon('arrow-left') + 'Tutti i corsi</a>' +
+      '<a class="back-link" href="#/corsi' + (course.degree ? '?laurea=' + course.degree : (placementOf(course) ? '' : '?laurea=da-assegnare')) + '">' + icon('arrow-left') + 'Tutti i corsi</a>' +
       '<section class="course-hero cover-' + (course.color % 8) + '">' +
         '<div class="course-hero-body"><span class="course-code light">' + esc(course.code || 'CORSO') + (course.year ? ' · A.A. ' + esc(course.year) : '') + '</span>' +
+          ' <span class="course-code light">' + esc(placementLabel(placementOf(course))) + '</span>' +
           '<h1>' + esc(course.name) + '</h1><p>' + (course.teacher ? 'Docente: Prof. ' + esc(course.teacher) : 'Docente non indicato') + '</p>' +
           (course.description ? '<p class="course-desc">' + esc(course.description) + '</p>' : '') + '</div>' +
         '<div class="course-hero-side"><div class="hero-count"><strong>' + all.length + '</strong><small>materiali</small></div>' +
           '<div class="hero-admin"><a class="btn btn-light btn-sm" href="#upload" data-action="scroll-upload">' + icon('upload') + 'Carica</a>' +
-          (isAdmin() ? '<a class="btn btn-light btn-sm" href="#/modifica-corso/' + id + '">' + icon('edit') + 'Modifica</a>' +
+          (isAdmin() ? moveSelect(course, 'light') + '<a class="btn btn-light btn-sm" href="#/modifica-corso/' + id + '">' + icon('edit') + 'Modifica</a>' +
             '<button class="btn btn-light btn-sm danger" type="button" data-action="delete-course" data-id="' + id + '" data-name="' + esc(course.name) + '" data-count="' + all.length + '">' + icon('trash') + 'Elimina</button>' : '') +
           '</div></div>' +
       '</section>' +
@@ -614,7 +684,7 @@
     try {
       if (h.path === '/') await dashboardPage();
       else if (h.path === '/corsi') await coursesPage(h.params);
-      else if (h.path === '/nuovo-corso') await courseFormPage(null);
+      else if (h.path === '/nuovo-corso') await courseFormPage(null, h.params);
       else if ((m = /^\/modifica-corso\/(\d+)$/.exec(h.path))) await courseFormPage(Number(m[1]));
       else if ((m = /^\/corso\/(\d+)$/.exec(h.path))) await coursePage(Number(m[1]), h.params);
       else if ((m = /^\/file\/(\d+)$/.exec(h.path))) await filePage(Number(m[1]));
@@ -841,6 +911,14 @@
   });
   document.addEventListener('change', function (e) {
     if (e.target.matches('[data-file-input]')) showSelected(e.target);
+    if (e.target.matches('select[data-move]')) {
+      var sel = e.target;
+      sel.disabled = true;
+      Api.moveCourse(Number(sel.getAttribute('data-move')), sel.value).then(function () {
+        toast('Corso spostato in: ' + placementLabel(sel.value) + '.');
+        route();
+      }).catch(function (err) { sel.disabled = false; fail(err); });
+    }
   });
   ['dragenter', 'dragover'].forEach(function (ev) {
     document.addEventListener(ev, function (e) {

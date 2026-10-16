@@ -45,11 +45,19 @@
 
   function baseName(name) { return name.replace(/\.[^.]+$/, '').slice(0, 200) || name; }
   function clean(v, max) { return String(v == null ? '' : v).trim().slice(0, max); }
+  // "triennale:2" → { degree: 'triennale', study_year: 2 }; "" → da assegnare
+  function parsePlacement(v) {
+    var m = /^(triennale|magistrale):([1-3])$/.exec(v || '');
+    if (!m || (m[1] === 'magistrale' && m[2] === '3')) return { degree: null, study_year: null };
+    return { degree: m[1], study_year: Number(m[2]) };
+  }
   function courseFields(d) {
-    return {
+    var f = {
       name: clean(d.name, 140), code: clean(d.code, 30) || null, teacher: clean(d.teacher, 120) || null,
       year: clean(d.year, 30) || null, description: clean(d.description, 2000) || null,
     };
+    if ('placement' in d) Object.assign(f, parsePlacement(d.placement));
+    return f;
   }
   // Per i filtri di ricerca di PostgREST: tolgo i caratteri con significato speciale.
   function safeQuery(q) { return clean(q, 100).replace(/[%*,()\\."':]/g, ' ').trim(); }
@@ -190,7 +198,14 @@
       },
 
       async createCourse(data) {
-        return check(await sb.from('courses').insert(courseFields(data)).select('id').single()).id;
+        var f = courseFields(data);
+        if (!f.degree) { delete f.degree; delete f.study_year; }
+        return check(await sb.from('courses').insert(f).select('id').single()).id;
+      },
+
+      async moveCourse(id, placement) {
+        var rows = check(await sb.from('courses').update(parsePlacement(placement)).eq('id', id).select('id'));
+        if (!rows.length) throw new Error('Non hai i permessi per questa operazione.');
       },
 
       async updateCourse(id, data) {
@@ -335,11 +350,11 @@
       { id: 'u-3', email: 'l.ferrari@' + CFG.allowedDomain, name: 'Luca Ferrari', role: 'student', created_at: iso(3000) },
     ];
     var courses = [
-      { id: 1, name: 'Chimica Generale e Inorganica', code: 'CHI-101', teacher: 'Rossi', year: '2026/2027', color: 0, description: 'Struttura atomica, legame chimico, stechiometria, equilibri in soluzione.' },
-      { id: 2, name: 'Chimica Organica I', code: 'CHI-201', teacher: 'Colombo', year: '2026/2027', color: 2, description: 'Gruppi funzionali, stereochimica, meccanismi di reazione.' },
-      { id: 3, name: 'Chimica Analitica', code: 'CHI-210', teacher: 'Ricci', year: '2026/2027', color: 1, description: 'Analisi quantitativa, titolazioni, metodi strumentali.' },
-      { id: 4, name: 'Chimica Fisica I', code: 'CHI-220', teacher: 'Marino', year: '2026/2027', color: 3, description: 'Termodinamica chimica e cinetica.' },
-      { id: 5, name: 'Matematica', code: 'MAT-101', teacher: 'Greco', year: '2026/2027', color: 4, description: '' },
+      { id: 1, name: 'Chimica Generale e Inorganica', code: 'CHI-101', teacher: 'Rossi', year: '2026/2027', color: 0, degree: 'triennale', study_year: 1, description: 'Struttura atomica, legame chimico, stechiometria, equilibri in soluzione.' },
+      { id: 2, name: 'Chimica Organica I', code: 'CHI-201', teacher: 'Colombo', year: '2026/2027', color: 2, degree: 'triennale', study_year: 2, description: 'Gruppi funzionali, stereochimica, meccanismi di reazione.' },
+      { id: 3, name: 'Chimica Analitica', code: 'CHI-210', teacher: 'Ricci', year: '2026/2027', color: 1, degree: 'triennale', study_year: 2, description: 'Analisi quantitativa, titolazioni, metodi strumentali.' },
+      { id: 4, name: 'Chimica Fisica Avanzata', code: 'CHI-520', teacher: 'Marino', year: '2026/2027', color: 3, degree: 'magistrale', study_year: 1, description: 'Termodinamica statistica e spettroscopia.' },
+      { id: 5, name: 'Matematica', code: 'MAT-101', teacher: 'Greco', year: '2026/2027', color: 4, degree: null, study_year: null, description: '' },
     ];
     var files = [];
     var blobs = {};
@@ -441,6 +456,11 @@
         if (!c.name) throw new Error('Il nome del corso è obbligatorio.');
         courses.push(c); log('corso_creato', c.name);
         return c.id;
+      },
+      async moveCourse(id, placement) {
+        requireAdmin();
+        Object.assign(courses.find(function (c) { return c.id === id; }), parsePlacement(placement));
+        log('corso_modificato', 'spostato');
       },
       async updateCourse(id, data) {
         requireAdmin();

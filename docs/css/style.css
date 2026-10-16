@@ -545,3 +545,29 @@ tr.is-banned td { background: #fdf6f5; }
   .podium-place { padding: 14px 6px; }
   .podium-place strong { font-size: .85rem; }
 }
+
+/* ---------- Corsi per laurea e anno ---------- */
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.degree-tabs { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 22px; }
+.degree-tabs a { display: flex; flex-direction: column; gap: 2px; padding: 12px 18px; min-width: 170px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); text-decoration: none; box-shadow: var(--shadow); transition: border-color .15s, background .15s; }
+.degree-tabs a span { font-size: .8rem; color: var(--muted); }
+.degree-tabs a:hover { border-color: color-mix(in srgb, var(--primary) 40%, var(--line)); }
+.degree-tabs a.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+.degree-tabs a.active span { color: rgba(255, 255, 255, .8); }
+.degree-tabs a.unassigned { border-style: dashed; }
+.degree-tabs a.unassigned.active { background: var(--accent); border-color: var(--accent); border-style: solid; }
+.year-section { margin-bottom: 30px; }
+.year-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.year-head h2 { display: flex; align-items: center; gap: 10px; }
+.year-badge { display: inline-grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: var(--primary-soft); color: var(--primary); font-family: var(--serif); font-size: 1.1rem; }
+.year-add { margin-left: auto; }
+.year-empty { padding: 14px 16px; border: 1px dashed var(--line); border-radius: 12px; margin: 0; }
+.course-item { display: flex; flex-direction: column; gap: 8px; }
+.course-item .course-card { flex: 1; }
+.move-select { display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--muted); }
+.move-select svg { width: 16px; height: 16px; }
+.move-select select { border: 0; background: transparent; padding: .5rem 0; min-width: 0; width: 100%; font-size: .84rem; color: var(--ink); box-shadow: none !important; }
+.move-select.light { background: rgba(255, 255, 255, .16); border-color: rgba(255, 255, 255, .3); color: #fff; padding: 0 8px; }
+.move-select.light select { color: #fff; width: auto; }
+.move-select.light select option { color: var(--ink); }
+.form select[name=placement] { width: 100%; }
