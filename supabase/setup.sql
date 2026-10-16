@@ -85,6 +85,22 @@ insert into public.app_settings (key, value) values
   ('evict_window_days', '180')         -- periodo in cui si contano le aperture
 on conflict (key) do nothing;
 
+-- Classifica (punti) e moderazione (sospensioni, segnalazioni)
+alter table public.profiles add column if not exists points integer not null default 0;
+alter table public.profiles add column if not exists upload_count integer not null default 0;
+alter table public.profiles add column if not exists banned_at timestamptz;
+alter table public.profiles add column if not exists banned_reason text;
+alter table public.profiles add column if not exists banned_by uuid references public.profiles(id) on delete set null;
+
+create table if not exists public.reports (
+  id         bigint generated always as identity primary key,
+  file_id    bigint not null references public.files(id) on delete cascade,
+  user_id    uuid not null references public.profiles(id) on delete cascade default auth.uid(),
+  reason     text not null check (char_length(reason) between 1 and 300),
+  created_at timestamptz not null default now(),
+  unique (file_id, user_id)
+);
+
 create table if not exists public.audit_log (
   id         bigint generated always as identity primary key,
   user_id    uuid references public.profiles(id) on delete set null,
@@ -96,9 +112,20 @@ create table if not exists public.audit_log (
 -- Funzioni di controllo -----------------------------------------------------------
 -- L'email arriva dal token firmato di Supabase Auth: l'utente non può modificarla
 -- senza confermare il nuovo indirizzo.
+-- Account campus e non sospeso
 create or replace function public.is_campus()
-returns boolean language sql stable as $$
+returns boolean language sql stable security definer set search_path = public as $$
   select coalesce(lower(auth.jwt() ->> 'email') like '%@' || public.allowed_domain(), false)
+     and not exists (select 1 from profiles where id = auth.uid() and banned_at is not null)
+$$;
+
+-- Stato del proprio account (per mostrare la pagina "Account sospeso")
+create or replace function public.my_status()
+returns json language sql stable security definer set search_path = public as $$
+  select case when lower(auth.jwt() ->> 'email') like '%@' || public.allowed_domain() then (
+    select json_build_object('exists', true, 'banned', banned_at is not null, 'reason', banned_reason, 'banned_at', banned_at)
+    from profiles where id = auth.uid()
+  ) end
 $$;
 
 create or replace function public.is_admin()
@@ -253,6 +280,9 @@ begin
   on conflict do nothing;
   if found then
     update files set open_count = open_count + 1, last_opened_at = now() where id = fid;
+    -- +1 punto a chi ha caricato il file, se lo apre qualcun altro
+    update profiles set points = points + 1
+    where id = (select uploaded_by from files where id = fid) and id <> auth.uid();
   else
     update files set last_opened_at = now() where id = fid;
   end if;
@@ -329,6 +359,87 @@ begin
   values (auth.uid(), case when value then 'file_protetto' else 'file_non_protetto' end, v_title);
 end $$;
 
+-- Punti della classifica: +10 per file (max 10 file al giorno), -10 se un admin
+-- elimina il file. Né la pulizia automatica né l'eliminazione di un corso tolgono punti.
+create or replace function public.award_points()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op = 'INSERT' and new.uploaded_by is not null then
+    update profiles set upload_count = upload_count + 1,
+      points = points + case when (select count(*) from files
+        where uploaded_by = new.uploaded_by and created_at >= date_trunc('day', now()) and id <= new.id) <= 10 then 10 else 0 end
+    where id = new.uploaded_by;
+  elsif tg_op = 'DELETE' and old.uploaded_by is not null
+        and coalesce(current_setting('app.auto_evict', true), '') <> '1'
+        and exists (select 1 from courses where id = old.course_id) then  -- se il corso è stato eliminato, niente penalità
+    update profiles set points = greatest(0, points - 10), upload_count = greatest(0, upload_count - 1)
+    where id = old.uploaded_by;
+  end if;
+  return null;
+end $$;
+drop trigger if exists award_points on public.files;
+create trigger award_points after insert or delete on public.files
+  for each row execute function public.award_points();
+
+-- Calcolo iniziale dei punti per i file caricati prima della classifica (una sola volta)
+do $$ begin
+  if not exists (select 1 from app_settings where key = 'points_initialized') then
+    update profiles p set
+      upload_count = (select count(*) from files f where f.uploaded_by = p.id),
+      points = 10 * (select count(*) from files f where f.uploaded_by = p.id)
+             + (select count(*) from file_opens o join files f on f.id = o.file_id
+                where f.uploaded_by = p.id and o.user_id <> p.id);
+    insert into app_settings (key, value) values ('points_initialized', 'true');
+  end if;
+end $$;
+
+-- Classifica: solo utenti attivi, senza dati riservati
+create or replace function public.leaderboard()
+returns table(user_id uuid, name text, points integer, upload_count integer, role text, rank_pos bigint)
+language sql stable security definer set search_path = public as $$
+  select p.id, p.name, p.points, p.upload_count, p.role,
+         rank() over (order by p.points desc, p.upload_count desc)
+  from profiles p
+  where public.is_campus() and p.banned_at is null
+  order by p.points desc, p.upload_count desc, p.name
+$$;
+
+-- Elenco completo degli utenti per gli amministratori (con lo stato di sospensione)
+create or replace function public.admin_users()
+returns table(id uuid, email text, name text, role text, points integer, upload_count integer,
+              banned_at timestamptz, banned_reason text, created_at timestamptz)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception 'Operazione riservata agli amministratori'; end if;
+  return query select p.id, p.email, p.name, p.role, p.points, p.upload_count, p.banned_at, p.banned_reason, p.created_at
+    from profiles p order by p.role = 'admin' desc, p.banned_at is not null, p.name;
+end $$;
+
+-- Sospendere / riattivare un utente
+create or replace function public.ban_user(target uuid, reason text)
+returns void language plpgsql security definer set search_path = public as $$
+declare v_email text; v_role text;
+begin
+  if not public.is_admin() then raise exception 'Operazione riservata agli amministratori'; end if;
+  select email, role into v_email, v_role from profiles where id = target;
+  if v_email is null then raise exception 'Utente non trovato'; end if;
+  if target = auth.uid() then raise exception 'Non puoi sospendere te stesso'; end if;
+  if v_role = 'admin' then raise exception 'Prima revoca il ruolo di amministratore'; end if;
+  if coalesce(trim(reason), '') = '' then raise exception 'Indica il motivo della sospensione'; end if;
+  update profiles set banned_at = now(), banned_reason = left(trim(reason), 300), banned_by = auth.uid() where id = target;
+  insert into audit_log (user_id, action, details) values (auth.uid(), 'utente_sospeso', v_email || ': ' || left(trim(reason), 300));
+end $$;
+
+create or replace function public.unban_user(target uuid)
+returns void language plpgsql security definer set search_path = public as $$
+declare v_email text;
+begin
+  if not public.is_admin() then raise exception 'Operazione riservata agli amministratori'; end if;
+  update profiles set banned_at = null, banned_reason = null, banned_by = null where id = target returning email into v_email;
+  if v_email is null then raise exception 'Utente non trovato'; end if;
+  insert into audit_log (user_id, action, details) values (auth.uid(), 'utente_riattivato', v_email);
+end $$;
+
 -- Permessi (Row Level Security) ----------------------------------------------------
 alter table public.profiles  enable row level security;
 alter table public.courses   enable row level security;
@@ -336,6 +447,7 @@ alter table public.files     enable row level security;
 alter table public.audit_log enable row level security;
 alter table public.file_opens enable row level security;
 alter table public.app_settings enable row level security;
+alter table public.reports enable row level security;
 revoke all on public.file_opens, public.app_settings from anon, authenticated;
 
 drop policy if exists "profili visibili agli studenti" on public.profiles;
@@ -366,12 +478,25 @@ drop policy if exists "file: solo admin eliminano" on public.files;
 create policy "file: solo admin eliminano" on public.files
   for delete to authenticated using (public.is_admin());
 
+drop policy if exists "segnalazioni: studenti segnalano" on public.reports;
+create policy "segnalazioni: studenti segnalano" on public.reports
+  for insert to authenticated with check (public.is_campus() and user_id = auth.uid());
+drop policy if exists "segnalazioni: admin leggono" on public.reports;
+create policy "segnalazioni: admin leggono" on public.reports
+  for select to authenticated using (public.is_admin());
+drop policy if exists "segnalazioni: admin archiviano" on public.reports;
+create policy "segnalazioni: admin archiviano" on public.reports
+  for delete to authenticated using (public.is_admin());
+
 drop policy if exists "registro: solo admin" on public.audit_log;
 create policy "registro: solo admin" on public.audit_log
   for select to authenticated using (public.is_admin());
 
-revoke all on public.profiles, public.courses, public.files, public.audit_log from anon, authenticated;
-grant select on public.profiles, public.audit_log to authenticated;
+revoke all on public.profiles, public.courses, public.files, public.audit_log, public.reports from anon, authenticated;
+-- Dei profili gli studenti vedono solo i dati pubblici (non lo stato di sospensione)
+grant select (id, email, name, role, created_at, points, upload_count) on public.profiles to authenticated;
+grant select on public.audit_log to authenticated;
+grant select, insert, delete on public.reports to authenticated;
 grant select, insert, update, delete on public.courses, public.files to authenticated;
 revoke execute on function public.set_role(uuid, text) from public, anon;
 grant execute on function public.set_role(uuid, text) to authenticated;

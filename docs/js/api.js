@@ -134,8 +134,13 @@
         me = null;
         return { error: 'domain', email: email };
       }
-      var res = await sb.from('profiles').select('*').eq('id', session.user.id).maybeSingle();
-      if (res.error || !res.data) return { error: 'profile' };
+      var res = await sb.from('profiles').select('id, email, name, role, created_at').eq('id', session.user.id).maybeSingle();
+      if (res.error || !res.data) {
+        // Profilo non visibile: account sospeso?
+        var st = await sb.rpc('my_status');
+        if (st.data && st.data.banned) return { error: 'banned', reason: st.data.reason, email: email };
+        return { error: 'profile' };
+      }
       me = res.data;
       return { user: me };
     }
@@ -270,12 +275,25 @@
       },
 
       async listUsers() {
-        var users = check(await sb.from('profiles').select('*').order('name'));
-        var files = check(await sb.from('files').select('uploaded_by').limit(10000));
-        var counts = {};
-        files.forEach(function (f) { counts[f.uploaded_by] = (counts[f.uploaded_by] || 0) + 1; });
-        users.forEach(function (u) { u.uploads = counts[u.id] || 0; });
-        return users;
+        return (check(await sb.rpc('admin_users')) || []).map(function (u) { u.uploads = u.upload_count; return u; });
+      },
+
+      async leaderboard() { return check(await sb.rpc('leaderboard')) || []; },
+      async banUser(userId, reason) { check(await sb.rpc('ban_user', { target: userId, reason: reason })); },
+      async unbanUser(userId) { check(await sb.rpc('unban_user', { target: userId })); },
+      async reportFile(fileId, reason) {
+        var res = await sb.from('reports').insert({ file_id: fileId, reason: clean(reason, 300) });
+        if (res.error && /duplicate|unique/i.test(res.error.message)) throw new Error('Hai già segnalato questo file.');
+        check(res);
+      },
+      async listReports() {
+        return check(await sb.from('reports')
+          .select('id, reason, created_at, file_id, file:files(id, title, uploaded_by, uploader:profiles!uploaded_by(name)), reporter:profiles!user_id(name)')
+          .order('created_at', { ascending: false }).limit(200)) || [];
+      },
+      async dismissReports(fileId) { check(await sb.from('reports').delete().eq('file_id', fileId)); },
+      async listUserFiles(userId) {
+        return check(await sb.from('files').select('id, title, storage, storage_path').eq('uploaded_by', userId).limit(1000)) || [];
       },
 
       async setRole(userId, role) { check(await sb.rpc('set_role', { target: userId, new_role: role })); },
@@ -326,6 +344,7 @@
     var files = [];
     var blobs = {};
     var audit = [];
+    var reports = [];
 
     function pdfBlob(title) {
       var text = 'BT /F1 26 Tf 60 760 Td (' + title.replace(/[()\\]/g, '') + ') Tj ET';
@@ -478,6 +497,40 @@
           return Object.assign({}, u, { uploads: files.filter(function (f) { return f.uploaded_by === u.id; }).length });
         });
       },
+      async leaderboard() {
+        var list = users.filter(function (u) { return !u.banned_at; }).map(function (u, i) {
+          var n = files.filter(function (f) { return f.uploaded_by === u.id; }).length;
+          return { user_id: u.id, name: u.name, role: u.role, upload_count: n, points: n * 10 + [140, 75, 30][i] };
+        }).sort(function (a, b) { return b.points - a.points; });
+        list.forEach(function (r, i) { r.rank_pos = i + 1; });
+        return list;
+      },
+      async banUser(userId, reason) {
+        requireAdmin();
+        var u = users.find(function (x) { return x.id === userId; });
+        if (u.role === 'admin') throw new Error('Prima revoca il ruolo di amministratore');
+        u.banned_at = new Date().toISOString(); u.banned_reason = reason;
+        log('utente_sospeso', u.email + ': ' + reason);
+      },
+      async unbanUser(userId) {
+        requireAdmin();
+        var u = users.find(function (x) { return x.id === userId; });
+        u.banned_at = null; u.banned_reason = null;
+        log('utente_riattivato', u.email);
+      },
+      async reportFile(fileId, reason) {
+        if (reports.some(function (r) { return r.file_id === fileId && r.user_id === me.id; })) throw new Error('Hai già segnalato questo file.');
+        reports.push({ id: ++seq, file_id: fileId, user_id: me.id, reason: reason, created_at: iso(0) });
+      },
+      async listReports() {
+        return reports.map(function (r) {
+          var f = files.find(function (x) { return x.id === r.file_id; });
+          var up = f && users.find(function (x) { return x.id === f.uploaded_by; });
+          return Object.assign({}, r, { file: f ? { id: f.id, title: f.title, uploaded_by: f.uploaded_by, uploader: up ? { name: up.name } : null } : null, reporter: { name: me.name } });
+        }).filter(function (r) { return r.file; });
+      },
+      async dismissReports(fileId) { reports = reports.filter(function (r) { return r.file_id !== fileId; }); },
+      async listUserFiles(userId) { return files.filter(function (f) { return f.uploaded_by === userId; }); },
       async setRole(userId, role) {
         requireAdmin();
         var u = users.find(function (x) { return x.id === userId; });

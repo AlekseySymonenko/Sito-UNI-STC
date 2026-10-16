@@ -85,6 +85,7 @@
           nav('#/corsi', 'courses', 'book', 'Corsi') +
           nav('#/cerca', 'search', 'search', 'Cerca materiali') +
           nav('#/miei', 'mine', 'upload', 'I miei caricamenti') +
+          nav('#/classifica', 'ranking', 'trophy', 'Classifica') +
           (isAdmin() ? '<p class="nav-label">Gestione</p>' + nav('#/admin', 'admin', 'shield', 'Amministrazione') : '') +
         '</nav>' +
         '<div class="sidebar-foot">' + icon('lock') + '<span>Accesso riservato agli account @' + esc(CFG.allowedDomain) + '</span></div>' +
@@ -368,6 +369,7 @@
           '<div class="stack">' +
             '<button class="btn btn-primary btn-block" type="button" data-action="download" data-id="' + f.id + '">' + icon('download') + 'Scarica</button>' +
             (inline ? '<a class="btn btn-ghost btn-block" href="' + esc(url) + '" target="_blank" rel="noopener">Apri a schermo intero</a>' : '') +
+            (f.uploaded_by !== state.user.id ? '<button class="btn btn-ghost btn-block btn-report" type="button" data-action="report" data-id="' + f.id + '">' + icon('flag') + 'Segnala contenuto inappropriato</button>' : '') +
             (isAdmin() && f.storage === 'b2' ? '<button class="btn btn-ghost btn-block" type="button" data-action="toggle-pin" data-id="' + f.id + '" data-pinned="' + (f.pinned ? '1' : '') + '">' +
               icon('shield') + (f.pinned ? 'Rimuovi protezione' : 'Proteggi dall\'eliminazione automatica') + '</button>' : '') +
             (isAdmin() ? '<button class="btn btn-danger btn-block" type="button" data-action="delete-file" data-id="' + f.id + '" data-back="#/corso/' + f.course_id + '">' + icon('trash') + 'Elimina materiale</button>' : '') +
@@ -413,14 +415,15 @@
     corso_creato: 'corso creato', corso_modificato: 'corso modificato', corso_eliminato: 'corso eliminato',
     ruolo_admin_assegnato: 'admin assegnato', ruolo_admin_revocato: 'admin revocato',
     file_eliminato_auto: 'eliminato in automatico', file_protetto: 'file protetto', file_non_protetto: 'protezione rimossa',
+    utente_sospeso: 'utente sospeso', utente_riattivato: 'utente riattivato',
   };
 
   async function adminPage(params) {
     if (!isAdmin()) return errorPage('Accesso negato', 'Questa sezione è riservata agli amministratori.');
     loading('admin');
     var res = await Promise.all([Api.stats(), Api.listUsers(), Api.listAudit(), Api.usage().catch(function () { return null; }),
-      Api.evictionPreview().catch(function () { return []; })]);
-    var stats = res[0], audit = res[2], usage = res[3], preview = res[4];
+      Api.evictionPreview().catch(function () { return []; }), Api.listReports().catch(function () { return []; })]);
+    var stats = res[0], audit = res[2], usage = res[3], preview = res[4], reports = res[5];
     var q = (params.get('q') || '').toLowerCase();
     var users = res[1].filter(function (u) { return !q || (u.name + ' ' + u.email).toLowerCase().indexOf(q) >= 0; })
       .sort(function (a, b) { return (a.role === 'admin' ? 0 : 1) - (b.role === 'admin' ? 0 : 1) || a.name.localeCompare(b.name); });
@@ -429,6 +432,7 @@
         '<p class="muted">Gli amministratori possono modificare i corsi ed eliminare corsi e materiali.</p></div></div>' +
       '<section class="stats">' + stat('users', stats.users, 'Utenti') + stat('book', stats.courses, 'Corsi') +
         stat('folder', stats.files, 'Materiali') + stat('archive', bytes(stats.bytes), 'Spazio usato (totale)') + '</section>' +
+      reportsPanel(reports) +
       (usage ? usagePanel(usage, preview, stats) : '') +
       '<section class="panel"><div class="panel-head wrap"><h2>Utenti e ruoli</h2>' +
         '<form class="inline-search" data-form="filter-users">' + icon('search') + '<input type="search" name="q" value="' + esc(params.get('q') || '') + '" placeholder="Cerca per nome o email"></form></div>' +
@@ -436,13 +440,21 @@
         '<div class="table-wrap"><table class="table"><thead><tr><th>Utente</th><th>Ruolo</th><th>Caricamenti</th><th class="right">Azioni</th></tr></thead><tbody>' +
         users.map(function (u) {
           var admin = u.role === 'admin';
-          return '<tr><td><div class="user-cell"><span class="avatar sm">' + esc(initials(u.name)) + '</span><div><strong>' + esc(u.name) + (u.id === state.user.id ? ' (tu)' : '') +
-            '</strong><small>' + esc(u.email) + '</small></div></div></td>' +
-            '<td><span class="role role-' + u.role + '">' + (admin ? 'Amministratore' : 'Studente') + '</span></td>' +
-            '<td>' + u.uploads + '</td><td class="right">' +
-            (admin ? '<button class="btn btn-ghost btn-sm" type="button" data-action="set-role" data-role="student" data-id="' + u.id + '" data-name="' + esc(u.name) + '">Revoca admin</button>'
-              : '<button class="btn btn-primary btn-sm" type="button" data-action="set-role" data-role="admin" data-id="' + u.id + '" data-name="' + esc(u.name) + '">' + icon('shield') + 'Rendi admin</button>') +
-            '</td></tr>';
+          var banned = Boolean(u.banned_at);
+          var who = ' data-id="' + u.id + '" data-name="' + esc(u.name) + '"';
+          var actions;
+          if (banned) {
+            actions = '<button class="btn btn-ghost btn-sm" type="button" data-action="unban"' + who + '>Riattiva</button>';
+          } else if (admin) {
+            actions = '<button class="btn btn-ghost btn-sm" type="button" data-action="set-role" data-role="student"' + who + '>Revoca admin</button>';
+          } else {
+            actions = '<button class="btn btn-primary btn-sm" type="button" data-action="set-role" data-role="admin"' + who + '>' + icon('shield') + 'Rendi admin</button>' +
+              '<button class="btn btn-ghost btn-sm danger-text" type="button" data-action="ban"' + who + '>' + icon('ban') + 'Sospendi</button>';
+          }
+          return '<tr class="' + (banned ? 'is-banned' : '') + '"><td><div class="user-cell"><span class="avatar sm">' + esc(initials(u.name)) + '</span><div><strong>' + esc(u.name) + (u.id === state.user.id ? ' (tu)' : '') +
+            '</strong><small>' + esc(u.email) + '</small>' + (banned ? '<small class="ban-reason">Sospeso: ' + esc(u.banned_reason || '') + '</small>' : '') + '</div></div></td>' +
+            '<td>' + (banned ? '<span class="role role-banned">Sospeso</span>' : '<span class="role role-' + u.role + '">' + (admin ? 'Amministratore' : 'Studente') + '</span>') + '</td>' +
+            '<td>' + (u.uploads || 0) + '</td><td class="right"><div class="row-actions">' + actions + '</div></td></tr>';
         }).join('') +
         (users.length ? '' : '<tr><td colspan="4" class="center muted">Nessun utente trovato.</td></tr>') +
         '</tbody></table></div></section>' +
@@ -453,6 +465,33 @@
             '<time class="muted small">' + dateTime(a.created_at) + '</time></li>';
         }).join('') : '<li class="muted">Nessuna attività registrata.</li>') +
       '</ul></section>', 'Amministrazione');
+  }
+
+  function reportsPanel(reports) {
+    if (!reports || !reports.length) return '';
+    var byFile = {};
+    reports.forEach(function (r) {
+      if (!r.file) return;
+      var g = byFile[r.file_id] = byFile[r.file_id] || { file: r.file, items: [] };
+      g.items.push(r);
+    });
+    var groups = Object.keys(byFile).map(function (k) { return byFile[k]; })
+      .sort(function (a, b) { return b.items.length - a.items.length; });
+    return '<section class="panel reports"><div class="panel-head"><h2>' + icon('flag') + 'Segnalazioni</h2>' +
+      '<span class="pill-count">' + groups.length + '</span></div><ul class="report-list">' +
+      groups.map(function (g) {
+        var f = g.file;
+        return '<li><div class="report-main"><a href="#/file/' + f.id + '"><strong>' + esc(f.title) + '</strong></a>' +
+          '<span class="muted small">caricato da ' + esc(f.uploader ? f.uploader.name : '—') + ' · ' + g.items.length + ' segnalazion' + (g.items.length === 1 ? 'e' : 'i') + '</span>' +
+          '<ul class="report-reasons">' + g.items.slice(0, 3).map(function (r) {
+            return '<li>«' + esc(r.reason) + '» <span class="muted small">— ' + esc(r.reporter ? r.reporter.name : '') + ', ' + date(r.created_at) + '</span></li>';
+          }).join('') + '</ul></div>' +
+          '<div class="row-actions">' +
+            '<button class="btn btn-danger btn-sm" type="button" data-action="delete-file" data-id="' + f.id + '" data-back="#/admin">' + icon('trash') + 'Elimina file</button>' +
+            (f.uploaded_by && f.uploaded_by !== state.user.id ? '<button class="btn btn-ghost btn-sm danger-text" type="button" data-action="ban" data-id="' + f.uploaded_by + '" data-name="' + esc(f.uploader ? f.uploader.name : 'l\'autore') + '">' + icon('ban') + 'Sospendi autore</button>' : '') +
+            '<button class="btn btn-ghost btn-sm" type="button" data-action="dismiss-reports" data-id="' + f.id + '">Ignora</button>' +
+          '</div></li>';
+      }).join('') + '</ul></section>';
   }
 
   function usagePanel(u, preview, stats) {
@@ -478,6 +517,66 @@
       '</section>';
   }
 
+  async function rankingPage() {
+    loading('ranking');
+    var list = await Api.leaderboard();
+    var L = window.Leagues;
+    list.forEach(function (r) { r.league = L.leagueFor(r.points, Number(r.rank_pos)); });
+    var meIdx = list.findIndex(function (r) { return r.user_id === state.user.id; });
+    var me = meIdx >= 0 ? list[meIdx] : { points: 0, upload_count: 0, rank_pos: list.length + 1, league: L.leagueFor(0) };
+    var lg = me.league;
+    var podium = list.slice(0, 3);
+    var order = [1, 0, 2].filter(function (i) { return podium[i]; });
+
+    var heroCard = '<section class="rank-hero tier-' + lg.tier.key + '">' +
+      '<div class="rank-hero-emblem">' + L.emblem(lg.tier.key, 132) + '</div>' +
+      '<div class="rank-hero-body"><p class="eyebrow">La tua lega</p><h1>' + esc(lg.label) + '</h1>' +
+        '<p class="rank-hero-meta"><strong>' + me.points + '</strong> punti · <strong>' + (me.upload_count || 0) + '</strong> file caricati · posizione <strong>#' + me.rank_pos + '</strong> su ' + Math.max(list.length, 1) + '</p>' +
+        (lg.next ? '<div class="rank-progress"><div data-width="' + Math.round(lg.progress * 100) + '"></div></div>' +
+          '<p class="small">Mancano <strong>' + lg.next.missing + ' punti</strong> per <strong>' + esc(lg.next.label) + '</strong></p>'
+          : '<p class="small">Sei ai vertici: ' + (lg.tier.key === 'sfidante' ? 'nessuno ha più punti di te! 👑' : 'scala la classifica per diventare Sfidante.') + '</p>') +
+      '</div></section>';
+
+    var tiersStrip = '<section class="panel"><div class="panel-head"><h2>Le leghe</h2><span class="muted small">soglie in punti</span></div><div class="tiers-strip">' +
+      L.TIERS.map(function (t) {
+        var req = t.key === 'granmaestro' ? 'top 5' : t.key === 'sfidante' ? 'n° 1' : t.min + '+';
+        return '<div class="tier-chip' + (t.key === lg.tier.key ? ' current' : '') + '">' + L.emblem(t.key, 56) + '<strong>' + t.name + '</strong><small>' + req + '</small></div>';
+      }).join('') + '</div></section>';
+
+    var podiumHtml = podium.length ? '<section class="podium">' + order.map(function (i) {
+      var r = podium[i];
+      return '<div class="podium-place place-' + (i + 1) + '">' + L.emblem(r.league.tier.key, i === 0 ? 92 : 72) +
+        '<span class="podium-rank">' + (i + 1) + '</span><strong>' + esc(r.name) + '</strong>' +
+        '<small>' + esc(r.league.label) + ' · ' + r.points + ' pt</small></div>';
+    }).join('') + '</section>' : '';
+
+    var table = '<section class="panel"><div class="panel-head"><h2>Classifica generale</h2></div>' +
+      (list.length ? '<div class="table-wrap"><table class="table rank-table"><thead><tr><th>#</th><th>Studente</th><th>Lega</th><th class="right">File</th><th class="right">Punti</th></tr></thead><tbody>' +
+        list.map(function (r) {
+          return '<tr class="' + (r.user_id === state.user.id ? 'is-me' : '') + '"><td class="rank-pos">' + r.rank_pos + '</td>' +
+            '<td><div class="user-cell"><span class="avatar sm">' + esc(initials(r.name)) + '</span><strong>' + esc(r.name) + (r.user_id === state.user.id ? ' (tu)' : '') + '</strong></div></td>' +
+            '<td><div class="league-cell">' + L.emblem(r.league.tier.key, 32) + '<span>' + esc(r.league.label) + '</span></div></td>' +
+            '<td class="right">' + (r.upload_count || 0) + '</td><td class="right"><strong>' + r.points + '</strong></td></tr>';
+        }).join('') + '</tbody></table></div>' : empty('trophy', 'Ancora nessun punteggio: carica il primo file!')) + '</section>';
+
+    var rules = '<section class="panel rules"><h2>Come si guadagnano i punti</h2><ul>' +
+      '<li><strong>+10</strong> per ogni file caricato (fino a 10 file al giorno)</li>' +
+      '<li><strong>+1</strong> ogni volta che un altro studente apre un tuo file (al massimo una volta al giorno per persona)</li>' +
+      '<li><strong>−10</strong> se un amministratore elimina un tuo file</li>' +
+      '<li>La pulizia automatica dello spazio e l\'eliminazione di un corso non tolgono punti</li></ul></section>';
+
+    render('ranking', heroCard + podiumHtml + '<div class="two-col rank-cols"><div>' + table + '</div><div>' + tiersStrip + rules + '</div></div>', 'Classifica');
+  }
+
+  function bannedPage(reason, email) {
+    document.title = 'Account sospeso · ' + CFG.platformName;
+    root.innerHTML = '<div class="banned-page"><div class="panel banned-card">' + icon('ban') +
+      '<h1>Account sospeso</h1><p>L\'account <strong>' + esc(email || '') + '</strong> è stato sospeso dagli amministratori di ' + esc(CFG.platformName) + '.</p>' +
+      (reason ? '<p class="ban-box"><strong>Motivo:</strong> ' + esc(reason) + '</p>' : '') +
+      '<p class="muted small">Se pensi che si tratti di un errore, contatta i rappresentanti degli studenti.</p>' +
+      '<button class="btn btn-ghost" type="button" data-action="logout">' + icon('logout') + 'Esci</button></div></div>';
+  }
+
   function errorPage(title, message) {
     render('', '<div class="panel error-card"><span class="error-code">!</span><h1>' + esc(title) + '</h1><p class="muted">' + esc(message) + '</p>' +
       '<a class="btn btn-primary" href="#/">' + icon('home') + 'Torna alla dashboard</a></div>', title);
@@ -497,6 +596,7 @@
       else if ((m = /^\/file\/(\d+)$/.exec(h.path))) await filePage(Number(m[1]));
       else if (h.path === '/cerca') await searchPage(h.params);
       else if (h.path === '/miei') await minePage();
+      else if (h.path === '/classifica') await rankingPage();
       else if (h.path === '/admin') await adminPage(h.params);
       else errorPage('Pagina non trovata', 'La pagina che cerchi non esiste.');
     } catch (err) {
@@ -553,6 +653,42 @@
         if (!confirm('Eliminare il corso «' + name + '» e TUTTI i suoi ' + el.getAttribute('data-count') + ' materiali? L\'operazione è irreversibile.')) return;
         el.disabled = true;
         try { await Api.deleteCourse(Number(id)); toast('Corso «' + name + '» eliminato.'); go('#/corsi'); }
+        catch (err) { el.disabled = false; fail(err); }
+        return;
+      }
+      case 'report': {
+        var why = prompt('Perché segnali questo file? (es. contenuto pornografico, offensivo, non didattico, violazione del diritto d\'autore)');
+        if (why === null) return;
+        if (!why.trim()) return toast('Scrivi il motivo della segnalazione.', 'error');
+        try { await Api.reportFile(Number(id), why.trim()); toast('Grazie! Gli amministratori controlleranno il file.'); }
+        catch (err) { fail(err); }
+        return;
+      }
+      case 'dismiss-reports': {
+        try { await Api.dismissReports(Number(id)); toast('Segnalazioni archiviate.'); route(); } catch (err) { fail(err); }
+        return;
+      }
+      case 'ban': {
+        var name = el.getAttribute('data-name');
+        var reason = prompt('Motivo della sospensione di ' + name + ' (verrà mostrato all\'utente):');
+        if (reason === null) return;
+        if (!reason.trim()) return toast('Indica il motivo della sospensione.', 'error');
+        el.disabled = true;
+        try {
+          await Api.banUser(id, reason.trim());
+          toast(name + ' è stato sospeso.');
+          var userFiles = await Api.listUserFiles(id);
+          if (userFiles.length && confirm('Eliminare anche tutti i ' + userFiles.length + ' file caricati da ' + name + '?')) {
+            for (var k = 0; k < userFiles.length; k++) await Api.deleteFile(userFiles[k]);
+            toast(userFiles.length + ' file eliminati.');
+          }
+          route();
+        } catch (err) { el.disabled = false; fail(err); }
+        return;
+      }
+      case 'unban': {
+        el.disabled = true;
+        try { await Api.unbanUser(id); toast(el.getAttribute('data-name') + ' è stato riattivato.'); route(); }
         catch (err) { el.disabled = false; fail(err); }
         return;
       }
@@ -719,6 +855,7 @@
     if (res && res.error === 'domain') {
       return loginPage('L\'account ' + (res.email || '') + ' non è un account @' + CFG.allowedDomain + '. Esci da Google e accedi con l\'account universitario.');
     }
+    if (res && res.error === 'banned') return bannedPage(res.reason, res.email);
     if (res && res.error === 'profile') return loginPage('Profilo non trovato. Riprova tra qualche secondo o contatta un amministratore.');
     loginPage();
   }).catch(function (err) {

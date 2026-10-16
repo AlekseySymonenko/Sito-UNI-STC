@@ -98,6 +98,22 @@ I numeri si cambiano dallo SQL Editor di Supabase, per esempio:
 `update app_settings set value = '30' where key = 'evict_grace_days';`
 (chiavi: `b2_quota_bytes`, `evict_grace_days`, `evict_window_days`).
 
+## Classifica e moderazione
+
+**Classifica a leghe** (menu *Classifica*): Ferro, Bronzo, Argento, Oro, Platino, Smeraldo e
+Diamante con 4 divisioni ciascuna; sopra i 1000 punti Maestro, Gran Maestro (posizioni 2–5) e
+Sfidante (n° 1). Gli stemmi sono disegni originali.
+- **+10** punti per file caricato (max 10 file al giorno)
+- **+1** quando un altro studente apre un tuo file (max una volta al giorno per persona)
+- **−10** se un amministratore elimina un tuo file (la pulizia automatica e l'eliminazione di un corso non tolgono punti)
+
+**Moderazione**
+- Ogni studente può **segnalare** un file inappropriato; le segnalazioni compaiono in *Amministrazione*
+  con i pulsanti *Elimina file*, *Sospendi autore*, *Ignora*.
+- Gli amministratori possono **sospendere** un utente indicando il motivo (ed eliminare tutti i suoi file).
+  L'utente sospeso non vede più nulla e trova la pagina "Account sospeso"; si può riattivare in ogni momento.
+  Gli amministratori non sono sospendibili finché non viene revocato il ruolo.
+
 ## Limiti del piano gratuito
 - Spazio per i file: circa **1 GB** in totale; ogni file al massimo **50 MB**.
 - Se nessuno usa il sito per **7 giorni**, Supabase mette in pausa il progetto: i dati restano,

@@ -143,5 +143,59 @@ select pg_temp.expect((select count(*) from courses) = 0, 'admin elimina il cors
 select pg_temp.expect((select count(distinct action) from audit_log where action in ('file_caricato','file_eliminato','corso_eliminato','ruolo_admin_assegnato')) = 4, 'registro attività completo');
 reset role;
 
+-- ===== Classifica =====
+insert into auth.users values ('00000000-0000-0000-0000-00000000000d', 'l.gatti@campus.unimib.it', '{"full_name":"Lucia Gatti"}');
+update profiles set points = 0, upload_count = 0;
+insert into courses (name) values ('Corso classifica');
+set role authenticated;
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000b","email":"n.cognome@campus.unimib.it"}', false);
+insert into files (course_id, title, original_name, storage_path, mime, kind, size)
+select (select id from courses where name = 'Corso classifica'), 'File ' || g, 'f' || g || '.pdf',
+       '00000000-0000-0000-0000-00000000000b/cl-' || g || '.pdf', 'application/pdf', 'pdf', 10
+from generate_series(1, 12) g;
+select pg_temp.expect((select points from profiles where email = 'n.cognome@campus.unimib.it') = 100, 'punti: +10 a file, max 10 file al giorno');
+select pg_temp.expect((select upload_count from profiles where email = 'n.cognome@campus.unimib.it') = 12, 'conteggio caricamenti completo');
+select record_file_open((select id from files where title = 'File 1'));
+select pg_temp.expect((select points from profiles where email = 'n.cognome@campus.unimib.it') = 100, 'aprire i propri file non dà punti');
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000d","email":"l.gatti@campus.unimib.it"}', false);
+select record_file_open((select id from files where title = 'File 1'));
+select record_file_open((select id from files where title = 'File 1'));
+select pg_temp.expect((select points from profiles where email = 'n.cognome@campus.unimib.it') = 101, '+1 punto se un altro apre il file (una volta al giorno)');
+select pg_temp.expect((select user_id from leaderboard() limit 1) = '00000000-0000-0000-0000-00000000000b', 'classifica ordinata per punti');
+select pg_temp.expect_error('select banned_reason from profiles', 'studenti non vedono i dati di sospensione');
+select pg_temp.expect((select count(*) from profiles) >= 3, 'studenti vedono i profili pubblici');
+-- segnalazioni
+insert into reports (file_id, reason) values ((select id from files where title = 'File 2'), 'Contenuto inappropriato');
+select pg_temp.expect_error($q$insert into reports (file_id, reason) values ((select id from files where title = 'File 2'), 'di nuovo')$q$, 'una sola segnalazione per file a persona');
+select pg_temp.expect((select count(*) from reports) = 0, 'studenti non leggono le segnalazioni');
+select pg_temp.expect_error($q$select ban_user('00000000-0000-0000-0000-00000000000b', 'x')$q$, 'studenti non sospendono');
+select pg_temp.expect_error('select * from admin_users()', 'elenco admin riservato');
+-- amministratore
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000a","email":"admin.uno@campus.unimib.it"}', false);
+select pg_temp.expect((select count(*) from reports) = 1, 'admin leggono le segnalazioni');
+delete from files where title = 'File 3';
+select pg_temp.expect((select points from profiles where email = 'n.cognome@campus.unimib.it') = 91, '-10 se un admin elimina un file');
+select pg_temp.expect_error($q$select ban_user('00000000-0000-0000-0000-00000000000a', 'x')$q$, 'non ci si auto-sospende');
+select pg_temp.expect_error($q$select ban_user('00000000-0000-0000-0000-00000000000b', '  ')$q$, 'serve un motivo');
+select ban_user('00000000-0000-0000-0000-00000000000b', 'Materiale pornografico');
+select pg_temp.expect((select banned_reason from admin_users() where email = 'n.cognome@campus.unimib.it') = 'Materiale pornografico', 'sospensione registrata');
+select pg_temp.expect(not exists (select 1 from leaderboard() where user_id = '00000000-0000-0000-0000-00000000000b'), 'sospesi esclusi dalla classifica');
+-- l'utente sospeso
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000b","email":"n.cognome@campus.unimib.it"}', false);
+select pg_temp.expect((my_status() ->> 'banned')::boolean and my_status() ->> 'reason' = 'Materiale pornografico', 'il sospeso vede il motivo');
+select pg_temp.expect((select count(*) from courses) = 0 and (select count(*) from files) = 0, 'il sospeso non vede più niente');
+select pg_temp.expect_error($q$insert into courses (name) values ('Ritorno')$q$, 'il sospeso non crea corsi');
+select pg_temp.expect_error($q$insert into storage.objects (bucket_id, name) values ('materiali', '00000000-0000-0000-0000-00000000000b/z.pdf')$q$, 'il sospeso non carica file');
+select pg_temp.expect(stats() is null, 'il sospeso non vede le statistiche');
+-- riattivazione ed eliminazione corso (senza penalità)
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000a","email":"admin.uno@campus.unimib.it"}', false);
+select unban_user('00000000-0000-0000-0000-00000000000b');
+delete from courses where name = 'Corso classifica';
+select pg_temp.expect((select points from profiles where email = 'n.cognome@campus.unimib.it') = 91, 'eliminare un corso non toglie punti');
+select pg_temp.expect((select count(*) from reports) = 0, 'segnalazioni rimosse con il file');
+set role authenticated;
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000b","email":"n.cognome@campus.unimib.it"}', false);
+select pg_temp.expect(not (my_status() ->> 'banned')::boolean and (select count(*) from profiles) >= 3, 'riattivato: accesso ripristinato');
+reset role;
 
 \warn 'TUTTI I TEST SUPERATI'

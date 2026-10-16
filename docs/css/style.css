@@ -481,3 +481,67 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: color-m
 .evict-list li span { display: block; }
 .a-file_eliminato_auto { background: var(--err-soft); color: var(--err); }
 .a-file_protetto { background: var(--ok-soft); color: var(--ok); }
+
+/* ---------- Classifica ---------- */
+svg.emblem { width: auto; height: auto; }
+.emblem { display: block; flex-shrink: 0; filter: drop-shadow(0 3px 6px rgba(0, 0, 0, .18)); }
+.rank-hero { position: relative; overflow: hidden; display: flex; align-items: center; gap: 28px; padding: 28px 32px; border-radius: 18px; margin-bottom: 24px; color: #fff;
+  background: radial-gradient(circle at 15% 50%, rgba(255, 255, 255, .18), transparent 45%), linear-gradient(120deg, #1b1f3a, #2c2350 60%, #3b1f3f); }
+.rank-hero::after { content: ''; position: absolute; inset: 0; background-image: radial-gradient(rgba(255, 255, 255, .07) 1px, transparent 1px); background-size: 16px 16px; pointer-events: none; }
+.rank-hero > * { position: relative; z-index: 1; }
+.rank-hero .eyebrow { color: #f5cf5a; }
+.rank-hero h1 { font-size: clamp(1.8rem, 3.4vw, 2.6rem); }
+.rank-hero-meta { opacity: .9; margin: 6px 0 12px; }
+.rank-hero-body { flex: 1; min-width: 0; }
+.rank-hero-emblem .emblem { filter: drop-shadow(0 8px 24px rgba(0, 0, 0, .45)); }
+.rank-progress { height: 10px; border-radius: 99px; background: rgba(255, 255, 255, .15); overflow: hidden; max-width: 460px; }
+.rank-progress > div { height: 100%; width: 0; background: linear-gradient(90deg, #f5cf5a, #ffe9a6); border-radius: 99px; transition: width .5s; }
+.podium { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; align-items: end; margin-bottom: 24px; }
+.podium-place { position: relative; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 12px; box-shadow: var(--shadow); }
+.podium-place.place-1 { padding-top: 26px; padding-bottom: 30px; border-color: color-mix(in srgb, #f5cf5a 60%, var(--line)); box-shadow: 0 10px 30px rgba(200, 160, 40, .2); }
+.podium-place small { color: var(--muted); }
+.podium-rank { position: absolute; top: 10px; left: 12px; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: .85rem; color: #fff; background: #9aa3ad; }
+.place-1 .podium-rank { background: linear-gradient(135deg, #e0a91b, #f5cf5a); }
+.place-3 .podium-rank { background: linear-gradient(135deg, #8a4f24, #c98a55); }
+.rank-cols { grid-template-columns: 1.4fr 1fr; }
+.tiers-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 10px; }
+.tier-chip { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 4px; border-radius: 12px; border: 1px solid transparent; text-align: center; }
+.tier-chip strong { font-size: .8rem; }
+.tier-chip small { font-size: .72rem; color: var(--muted); }
+.tier-chip.current { border-color: var(--accent); background: var(--accent-soft); }
+.rank-table .rank-pos { font-weight: 700; color: var(--muted); width: 40px; }
+.rank-table tr.is-me td { background: var(--accent-soft); }
+.league-cell { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.rules ul { margin: 8px 0 0; padding-left: 1.1rem; display: grid; gap: 6px; font-size: .9rem; }
+
+/* ---------- Moderazione ---------- */
+.row-actions { display: inline-flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.danger-text { color: var(--err); }
+.danger-text:hover { color: #fff; background: var(--err); border-color: var(--err); }
+.role-banned { background: var(--err-soft); color: var(--err); }
+.ban-reason { color: var(--err) !important; }
+tr.is-banned td { background: #fdf6f5; }
+.btn-report { color: var(--muted); font-weight: 500; }
+.btn-report:hover { color: var(--err); }
+.reports .panel-head h2 { display: flex; align-items: center; gap: 8px; color: var(--err); }
+.pill-count { background: var(--err); color: #fff; border-radius: 99px; padding: 2px 10px; font-weight: 700; font-size: .8rem; }
+.report-list { list-style: none; margin: 0; padding: 0; }
+.report-list > li { display: flex; justify-content: space-between; gap: 14px; align-items: flex-start; flex-wrap: wrap; padding: 12px 0; border-bottom: 1px solid var(--line-2); }
+.report-list > li:last-child { border-bottom: 0; }
+.report-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 260px; }
+.report-reasons { margin: 6px 0 0; padding-left: 1rem; font-size: .86rem; }
+.banned-page { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+.banned-card { max-width: 480px; text-align: center; padding: 36px 30px; }
+.banned-card > svg { width: 52px; height: 52px; color: var(--err); margin-bottom: 8px; }
+.banned-card h1 { margin-bottom: 8px; }
+.ban-box { background: var(--err-soft); color: var(--err); border-radius: 10px; padding: 10px 14px; text-align: left; }
+.a-utente_sospeso { background: var(--err-soft); color: var(--err); }
+.a-utente_riattivato { background: var(--ok-soft); color: var(--ok); }
+@media (max-width: 1180px) { .rank-cols { grid-template-columns: 1fr; } }
+@media (max-width: 700px) {
+  .rank-hero { flex-direction: column; text-align: center; padding: 24px 18px; }
+  .rank-progress { margin: 0 auto; }
+  .podium { gap: 8px; }
+  .podium-place { padding: 14px 6px; }
+  .podium-place strong { font-size: .85rem; }
+}
