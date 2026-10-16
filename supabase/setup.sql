@@ -82,8 +82,10 @@ create table if not exists public.app_settings (
 insert into public.app_settings (key, value) values
   ('b2_quota_bytes', '10200547328'),   -- 9,5 GB: sotto i 10 GB gratuiti di Backblaze
   ('evict_grace_days', '14'),          -- i file più recenti di così non vengono mai eliminati
-  ('evict_window_days', '180')         -- periodo in cui si contano le aperture
+  ('evict_window_days', '365')         -- periodo in cui si contano le aperture (un anno: copre entrambi i semestri)
 on conflict (key) do nothing;
+-- Aggiornamento: il vecchio valore predefinito era 6 mesi
+update public.app_settings set value = '365' where key = 'evict_window_days' and value = '180';
 
 -- Classifica (punti) e moderazione (sospensioni, segnalazioni)
 alter table public.profiles add column if not exists points integer not null default 0;
@@ -294,7 +296,7 @@ returns table(file_id bigint, file_title text, bytes bigint, opens bigint, last_
 language sql stable security definer set search_path = public as $$
   select f.id, f.title, f.size,
          (select count(*) from file_opens o
-           where o.file_id = f.id and o.day > current_date - public.setting_int('evict_window_days', 180)::int),
+           where o.file_id = f.id and o.day > current_date - public.setting_int('evict_window_days', 365)::int),
          coalesce(f.last_opened_at, f.created_at),
          f.storage_path, f.storage_version
   from files f

@@ -4,7 +4,7 @@
 
   // Versione del sito: deve coincidere con data-v in index.html. Se Safari ha in
   // memoria una pagina principale vecchia, la ricarichiamo (una volta) aggirando la cache.
-  var VERSION = '20261016g';
+  var VERSION = '20261016h';
   if (document.documentElement.getAttribute('data-v') !== VERSION) {
     var tried = false;
     try { tried = sessionStorage.getItem('reload-v') === VERSION; sessionStorage.setItem('reload-v', VERSION); } catch (e) { /* ignora */ }
@@ -518,7 +518,7 @@
       '<p class="small"><strong>' + bytes(u.used) + '</strong> usati di ' + bytes(u.quota) + ' (' + pctLabel + ').' +
       (other > 0 ? ' Altri <strong>' + bytes(other) + '</strong> sono sull\'archivio di Supabase (file caricati prima di B2, limite 1 GB).' : '') + ' ' +
       (u.where === 'Backblaze B2'
-        ? 'Quando lo spazio non basta per un nuovo file, vengono eliminati in automatico i file meno aperti negli ultimi 6 mesi ' +
+        ? 'Quando lo spazio non basta per un nuovo file, vengono eliminati in automatico i file meno aperti nell\'ultimo anno ' +
           '(mai quelli caricati da meno di 14 giorni o protetti 📌).'
         : 'Quando lo spazio finisce, i caricamenti vengono bloccati: nessun costo.') + '</p>' +
       (preview && preview.length ? '<h3 class="usage-sub">Primi file che verrebbero eliminati</h3><ol class="evict-list">' +

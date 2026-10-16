@@ -86,7 +86,7 @@ La chiave di B2 resta solo nei Secrets di Supabase: il sito non la vede mai.
 
 ### Pulizia automatica dello spazio
 Se un nuovo file non ci sta nei 9,5 GB, il sistema elimina **solo quanto basta**, scegliendo:
-1. i file aperti meno volte negli ultimi 6 mesi (ogni studente conta al massimo una volta al giorno);
+1. i file aperti meno volte nell'ultimo anno (ogni studente conta al massimo una volta al giorno);
 2. a parità, quelli aperti (o caricati) meno di recente.
 
 Non vengono mai eliminati i file caricati da meno di 14 giorni né quelli **protetti 📌**
