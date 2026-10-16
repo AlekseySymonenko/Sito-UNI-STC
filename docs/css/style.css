@@ -637,3 +637,18 @@ a.info-item > svg { position: absolute; right: 12px; top: 50%; transform: transl
 .modal h2 { margin-bottom: 4px; }
 @media (max-width: 900px) { .info-grid { grid-template-columns: 1fr; } .reps-hero-ic { display: none; } }
 .rep-card:has(.item-tools) .rep-body { padding-right: 72px; }
+
+/* ---------- Corsi: menu a tendina ---------- */
+.nav-row { display: flex; align-items: center; gap: 4px; }
+.nav-row > a { flex: 1; }
+.nav-toggle { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 8px; background: none; color: rgba(255, 255, 255, .8); cursor: pointer; }
+.nav-toggle:hover { background: rgba(255, 255, 255, .1); }
+.nav-toggle svg { width: 16px; height: 16px; transition: transform .2s; }
+.nav-toggle.open svg { transform: rotate(90deg); }
+.nav-tree { display: none; }
+.nav-tree.open { display: flex; }
+.courses-toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: stretch; margin-bottom: 20px; }
+.courses-toolbar .filter-bar { margin: 0; flex: 1 1 320px; }
+.aa-select { display: flex; align-items: center; gap: 8px; padding: 0 6px 0 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); font-size: .86rem; font-weight: 600; color: var(--ink-2); }
+.aa-select svg { width: 16px; height: 16px; color: var(--primary); }
+.aa-select select { border: 0; box-shadow: none !important; min-width: 0; width: auto; padding: .6rem .4rem; font-weight: 600; background: transparent; }

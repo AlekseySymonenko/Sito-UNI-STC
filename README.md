@@ -103,8 +103,12 @@ I numeri si cambiano dallo SQL Editor di Supabase, per esempio:
 La pagina *Corsi* è divisa in **Laurea Triennale** (1°–3° anno) e **Laurea Magistrale** (1°–2° anno);
 i corsi senza collocazione stanno in **Da assegnare**. Nel menu laterale, sotto *Corsi*, la voce
 **Anno di corso** porta direttamente a ogni anno. Chi crea un corso sceglie laurea e anno;
-gli amministratori possono **modificare o spostare** un corso dal menu **⋯** sulla sua scheda
-(o nella pagina del corso).
+gli amministratori possono **modificare o spostare** un corso dal menu **⋯** sulla sua scheda.
+
+**Anno accademico**: nel modulo del corso si sceglie da un menu (es. 2026/2027) e la pagina *Corsi*
+raggruppa automaticamente i corsi per anno accademico, con un menu a tendina in alto (preimpostato
+sull'anno in corso; da settembre passa al successivo). Gli anni scritti a mano in altri formati
+(es. "2026-27") vengono riconosciuti e uniformati.
 
 ## Pagina Rappresentanti
 

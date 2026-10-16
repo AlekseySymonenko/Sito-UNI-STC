@@ -45,6 +45,16 @@
 
   function baseName(name) { return name.replace(/\.[^.]+$/, '').slice(0, 200) || name; }
   function clean(v, max) { return String(v == null ? '' : v).trim().slice(0, max); }
+  // Anno accademico in forma standard "2026/2027" (accetta "2026-27", "26/27", "2026"...)
+  function normAA(v) {
+    var m = /(\d{4}|\d{2})\s*[\/\-–]\s*(\d{4}|\d{2})/.exec(String(v || ''));
+    var start = m ? Number(m[1]) : Number((/(?:^|\D)(\d{4})(?:\D|$)/.exec(String(v || '')) || [])[1]);
+    if (!start) return '';
+    if (start < 100) start += 2000;
+    if (start < 1990 || start > 2100) return '';
+    return start + '/' + (start + 1);
+  }
+
   // "triennale:2" → { degree: 'triennale', study_year: 2 }; "" → da assegnare
   function parsePlacement(v) {
     var m = /^(triennale|magistrale):([1-3])$/.exec(v || '');
@@ -54,7 +64,7 @@
   function courseFields(d) {
     var f = {
       name: clean(d.name, 140), code: clean(d.code, 30) || null, teacher: clean(d.teacher, 120) || null,
-      year: clean(d.year, 30) || null, description: clean(d.description, 2000) || null,
+      year: normAA(d.year) || clean(d.year, 30) || null, description: clean(d.description, 2000) || null,
     };
     if ('placement' in d) Object.assign(f, parsePlacement(d.placement));
     return f;
@@ -373,7 +383,7 @@
       { id: 2, name: 'Chimica Organica I', code: 'CHI-201', teacher: 'Colombo', year: '2026/2027', color: 2, degree: 'triennale', study_year: 2, description: 'Gruppi funzionali, stereochimica, meccanismi di reazione.' },
       { id: 3, name: 'Chimica Analitica', code: 'CHI-210', teacher: 'Ricci', year: '2026/2027', color: 1, degree: 'triennale', study_year: 2, description: 'Analisi quantitativa, titolazioni, metodi strumentali.' },
       { id: 4, name: 'Chimica Fisica Avanzata', code: 'CHI-520', teacher: 'Marino', year: '2026/2027', color: 3, degree: 'magistrale', study_year: 1, description: 'Termodinamica statistica e spettroscopia.' },
-      { id: 5, name: 'Matematica', code: 'MAT-101', teacher: 'Greco', year: '2026/2027', color: 4, degree: null, study_year: null, description: '' },
+      { id: 5, name: 'Matematica', code: 'MAT-101', teacher: 'Greco', year: '2025-26', color: 4, degree: null, study_year: null, description: '' },
     ];
     var files = [];
     var blobs = {};
@@ -614,5 +624,6 @@
   window.Api = configured ? SupabaseApi() : DemoApi();
   window.Api.typeFor = typeFor;
   window.Api.friendlyError = friendlyError;
+  window.Api.normAA = normAA;
   window.Api.acceptAttr = Object.keys(TYPES).map(function (e) { return '.' + e; }).join(',');
 })();
