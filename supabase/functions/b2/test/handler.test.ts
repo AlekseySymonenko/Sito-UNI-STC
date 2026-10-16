@@ -141,6 +141,14 @@ test('url: link temporaneo con nome file e tipo corretti', async () => {
   assert.match(new URL(inline.data.url).searchParams.get('response-content-disposition')!, /^inline/);
 });
 
+test('nomi con parentesi e apostrofi accettati da B2 (RFC 5987)', async () => {
+  const { rfc5987 } = await import('../index.ts');
+  assert.strictEqual(rfc5987("1- Struttura Atomica (1).pdf"), '1-%20Struttura%20Atomica%20%281%29.pdf');
+  assert.strictEqual(rfc5987("L'atomo*!.pdf"), 'L%27atomo%2A%21.pdf');
+  // solo caratteri ammessi dallo standard dopo filename*=UTF-8''
+  assert.match(rfc5987("Àccènti (bozza) [v2] #1 & più.pdf"), /^[A-Za-z0-9%\-._~]+$/);
+});
+
 test('eliminazione: solo admin', async () => {
   assert.strictEqual((await call('student', { action: 'delete', id: 9 })).status, 403);
   assert.strictEqual((await call('student', { action: 'delete-course-files', courseId: 1 })).status, 403);

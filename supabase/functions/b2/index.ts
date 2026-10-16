@@ -161,6 +161,11 @@ async function getFile(req: Request, id: unknown) {
   return rows[0];
 }
 
+// Nome file per l'intestazione Content-Disposition (RFC 5987): oltre a quanto codifica
+// encodeURIComponent vanno codificati anche ' ( ) * ! , altrimenti B2 rifiuta la richiesta.
+export const rfc5987 = (name: string) =>
+  encodeURIComponent(name).replace(/['()*!]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+
 // ---- Operazioni su B2 ------------------------------------------------------------------
 const sign = (b2: B2, method: string, key: string, expires = URL_TTL, query?: Record<string, string>) =>
   presign({ method, key, expires, query, host: b2.host, region: b2.region, bucket: b2.bucket, accessKey: b2.accessKey, secretKey: b2.secretKey });
@@ -306,7 +311,7 @@ async function handle(req: Request, body: Record<string, unknown>) {
       const ascii = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
       const inline = !body.download && ['pdf', 'image', 'audio', 'video'].includes(f.kind);
       const query: Record<string, string> = {
-        'response-content-disposition': `${inline ? 'inline' : 'attachment'}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`,
+        'response-content-disposition': `${inline ? 'inline' : 'attachment'}; filename="${ascii}"; filename*=UTF-8''${rfc5987(name)}`,
         'response-content-type': t ? t.mime : 'application/octet-stream',
       };
       return { url: await sign(b2, 'GET', f.storage_path, URL_TTL, query), expires: URL_TTL };
