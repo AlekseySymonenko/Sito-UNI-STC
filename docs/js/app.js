@@ -110,7 +110,7 @@
         '</header>' +
         '<main id="main" class="content">' + body + '</main>' +
         '<footer class="footer"><span>' + esc(CFG.platformName) + ' · ' + esc(CFG.universityName) + '</span>' +
-          '<span>' + esc(CFG.disclaimer || 'Materiali condivisi dagli studenti per uso didattico') + '</span></footer>' +
+          '<span>' + esc(CFG.disclaimer || 'Materiali condivisi dagli studenti per uso didattico') + ' · <a href="privacy.html">Privacy</a></span></footer>' +
       '</div>';
   }
 
@@ -185,7 +185,7 @@
               '<li><span class="feat-ic">' + icon('audio') + '</span>Registrazioni audio e video con player integrato</li>' +
               '<li><span class="feat-ic">' + icon('users') + '</span>Ogni studente può contribuire caricando materiale</li>' +
             '</ul></div>' +
-          '<p class="hero-foot">' + esc(CFG.disclaimer || '') + '</p>' +
+          '<p class="hero-foot">' + esc(CFG.disclaimer || '') + ' · <a href="privacy.html">Informativa privacy</a></p>' +
         '</section>' +
         '<section class="login-panel"><div class="login-card">' +
           '<h2>Accedi</h2>' +
