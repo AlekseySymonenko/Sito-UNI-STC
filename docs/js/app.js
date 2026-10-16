@@ -4,7 +4,7 @@
 
   // Versione del sito: deve coincidere con data-v in index.html. Se Safari ha in
   // memoria una pagina principale vecchia, la ricarichiamo (una volta) aggirando la cache.
-  var VERSION = '20261016i';
+  var VERSION = '20261016k';
   if (document.documentElement.getAttribute('data-v') !== VERSION) {
     var tried = false;
     try { tried = sessionStorage.getItem('reload-v') === VERSION; sessionStorage.setItem('reload-v', VERSION); } catch (e) { /* ignora */ }
@@ -95,9 +95,18 @@
           '<p class="nav-label">Didattica</p>' +
           nav('#/', 'home', 'home', 'Dashboard') +
           nav('#/corsi', 'courses', 'book', 'Corsi') +
+          '<div class="nav-tree" aria-label="Anno di corso"><p class="nav-sub-label">Anno di corso</p>' +
+            DEGREES.map(function (d) {
+              return '<span class="nav-group">' + d.label + '</span>' + d.years.map(function (y) {
+                var key = d.key + ':' + y;
+                return '<a class="nav-leaf' + (active === 'courses' && currentPlace === key ? ' active' : '') + '" href="#/corsi?laurea=' + d.key + '&anno=' + y + '">' + y + '° anno</a>';
+              }).join('');
+            }).join('') + '</div>' +
           nav('#/cerca', 'search', 'search', 'Cerca materiali') +
           nav('#/miei', 'mine', 'upload', 'I miei caricamenti') +
           nav('#/classifica', 'ranking', 'trophy', 'Classifica') +
+          '<p class="nav-label">Corso di studi</p>' +
+          nav('#/rappresentanti', 'reps', 'users', 'Rappresentanti') +
           (isAdmin() ? '<p class="nav-label">Gestione</p>' + nav('#/admin', 'admin', 'shield', 'Amministrazione') : '') +
         '</nav>' +
         '<div class="sidebar-foot">' + icon('lock') + '<span>Accesso riservato agli account @' + esc(CFG.allowedDomain) + '</span></div>' +
@@ -123,10 +132,16 @@
         '</header>' +
         '<main id="main" class="content">' + body + '</main>' +
         '<footer class="footer"><span>' + esc(CFG.platformName) + ' · ' + esc(CFG.universityName) + '</span>' +
+          credit() +
           '<span>' + esc(CFG.disclaimer || 'Materiali condivisi dagli studenti per uso didattico') + ' · <a href="privacy.html">Privacy</a></span></footer>' +
       '</div>';
   }
 
+  function credit() {
+    return '<span class="credit">Fatto con <span class="heart" aria-label="amore">♥</span> da <strong>Aleksey Symonenko</strong></span>';
+  }
+
+  var currentPlace = '';
   function render(active, body, title) {
     document.title = (title ? title + ' · ' : '') + CFG.platformName;
     root.innerHTML = shell(active, body);
@@ -163,12 +178,26 @@
     opts.push('<option value=""' + (!selected ? ' selected' : '') + '>Da assegnare</option>');
     return opts.join('');
   }
-  function moveSelect(c, extraClass) {
-    return '<label class="move-select ' + (extraClass || '') + '" title="Sposta il corso">' + icon('folder') +
-      '<span class="sr-only">Sposta in</span><select data-move="' + c.id + '">' + placementOptions(placementOf(c)) + '</select></label>';
+  // Menu "⋯" del corso (solo admin): modifica e spostamento in un altro anno
+  function courseMenu(c, extraClass) {
+    var here = placementOf(c);
+    var places = [];
+    DEGREES.forEach(function (d) { d.years.forEach(function (y) { places.push(d.key + ':' + y); }); });
+    places.push('');
+    return '<div class="course-menu ' + (extraClass || '') + '">' +
+      '<button class="kebab" type="button" data-action="course-menu" aria-haspopup="true" aria-label="Opzioni del corso ' + esc(c.name) + '">' + icon('dots') + '</button>' +
+      '<div class="course-menu-pop" role="menu">' +
+        '<a role="menuitem" href="#/modifica-corso/' + c.id + '">' + icon('edit') + 'Modifica corso</a>' +
+        '<p class="menu-label">Sposta in</p>' +
+        places.map(function (v) {
+          var cur = v === here;
+          return '<button role="menuitem" type="button" class="' + (cur ? 'current' : '') + '"' + (cur ? ' disabled' : '') +
+            ' data-action="move-course" data-id="' + c.id + '" data-place="' + v + '">' + icon(cur ? 'check' : 'folder') + placementLabel(v) + '</button>';
+        }).join('') +
+      '</div></div>';
   }
   function courseItem(c) {
-    return '<div class="course-item">' + courseCard(c) + (isAdmin() ? moveSelect(c) : '') + '</div>';
+    return '<div class="course-item">' + courseCard(c) + (isAdmin() ? courseMenu(c) : '') + '</div>';
   }
 
   function courseCard(c) {
@@ -229,7 +258,7 @@
               '<li><span class="feat-ic">' + icon('audio') + '</span>Registrazioni audio e video con player integrato</li>' +
               '<li><span class="feat-ic">' + icon('users') + '</span>Ogni studente può contribuire caricando materiale</li>' +
             '</ul></div>' +
-          '<p class="hero-foot">' + esc(CFG.disclaimer || '') + ' · <a href="privacy.html">Informativa privacy</a></p>' +
+          '<p class="hero-foot">' + esc(CFG.disclaimer || '') + ' · <a href="privacy.html">Informativa privacy</a><br>' + credit() + '</p>' +
         '</section>' +
         '<section class="login-panel"><div class="login-card">' +
           '<h2>Accedi</h2>' +
@@ -278,10 +307,12 @@
   }
 
   async function coursesPage(params) {
+    currentPlace = '';
     loading('courses');
     var q = (params.get('q') || '').toLowerCase();
     var all = await Api.listCourses();
     var unassigned = all.filter(function (c) { return !placementOf(c); });
+    var onlyYear = Number(params.get('anno')) || 0;
     var view = params.get('laurea');
     if (['triennale', 'magistrale', 'da-assegnare'].indexOf(view) < 0) view = 'triennale';
     if (view === 'da-assegnare' && !unassigned.length) view = 'triennale';
@@ -315,11 +346,16 @@
         '</nav>';
       if (view === 'da-assegnare') {
         body = seg + '<section class="year-section"><div class="year-head"><h2>Corsi da assegnare</h2>' +
-          (isAdmin() ? '<span class="muted small">Usa il menu sotto ogni corso per spostarlo nell\'anno giusto</span>' : '') + '</div>' +
+          (isAdmin() ? '<span class="muted small">Usa il menu ⋯ su ogni corso per spostarlo nell\'anno giusto</span>' : '') + '</div>' +
           '<div class="course-grid">' + unassigned.map(courseItem).join('') + '</div></section>';
       } else {
         var deg = DEGREES.filter(function (d) { return d.key === view; })[0];
-        body = seg + deg.years.map(function (y) {
+        if (deg.years.indexOf(onlyYear) < 0) onlyYear = 0;
+        currentPlace = onlyYear ? deg.key + ':' + onlyYear : '';
+        var crumbs = '<nav class="crumbs" aria-label="Percorso"><a href="#/corsi">Anno di corso</a><span>›</span>' +
+          (onlyYear ? '<a href="#/corsi?laurea=' + deg.key + '">' + deg.label + '</a><span>›</span><strong>' + onlyYear + '° anno</strong>'
+            : '<strong>' + deg.label + '</strong>') + '</nav>';
+        body = seg + crumbs + deg.years.filter(function (y) { return !onlyYear || y === onlyYear; }).map(function (y) {
           var list = all.filter(function (c) { return c.degree === deg.key && Number(c.study_year) === y; });
           return '<section class="year-section"><div class="year-head"><h2><span class="year-badge">' + y + '°</span> anno</h2>' +
             '<span class="muted small">' + list.length + ' cors' + (list.length === 1 ? 'o' : 'i') + '</span>' +
@@ -329,6 +365,7 @@
         }).join('');
       }
     }
+    if (view !== 'triennale' && view !== 'magistrale') currentPlace = '';
     render('courses', head + body, 'Corsi');
   }
 
@@ -386,7 +423,7 @@
           (course.description ? '<p class="course-desc">' + esc(course.description) + '</p>' : '') + '</div>' +
         '<div class="course-hero-side"><div class="hero-count"><strong>' + all.length + '</strong><small>materiali</small></div>' +
           '<div class="hero-admin"><a class="btn btn-light btn-sm" href="#upload" data-action="scroll-upload">' + icon('upload') + 'Carica</a>' +
-          (isAdmin() ? moveSelect(course, 'light') + '<a class="btn btn-light btn-sm" href="#/modifica-corso/' + id + '">' + icon('edit') + 'Modifica</a>' +
+          (isAdmin() ? courseMenu(course, 'inline') +
             '<button class="btn btn-light btn-sm danger" type="button" data-action="delete-course" data-id="' + id + '" data-name="' + esc(course.name) + '" data-count="' + all.length + '">' + icon('trash') + 'Elimina</button>' : '') +
           '</div></div>' +
       '</section>' +
@@ -671,6 +708,95 @@
       '<button class="btn btn-ghost" type="button" data-action="logout">' + icon('logout') + 'Esci</button></div></div>';
   }
 
+  var INFO_SECTIONS = [
+    { key: 'matricole', title: 'Link utili per le matricole', icon: 'users' },
+    { key: 'siti', title: 'Siti utili', icon: 'link' },
+    { key: 'app', title: 'Applicazioni utili', icon: 'phone' },
+    { key: 'sicurezza', title: 'Corso della sicurezza', icon: 'shield' },
+    { key: 'esami', title: 'Esami scoglio', icon: 'alert' },
+    { key: 'rappresentanza', title: 'Vuoi fare il rappresentante?', icon: 'flag' },
+  ];
+  var infoCache = { reps: [], links: [] };
+
+  async function repsPage() {
+    loading('reps');
+    var res;
+    try { res = await Promise.all([Api.listRepresentatives(), Api.listInfoLinks()]); }
+    catch (err) {
+      return errorPage('Pagina non ancora pronta', 'Un amministratore deve aggiornare il database (setup.sql) per attivare questa pagina.');
+    }
+    var reps = infoCache.reps = res[0];
+    var links = infoCache.links = res[1];
+    var admin = isAdmin();
+    var safeUrl = function (u) { return /^https:\/\//.test(u || '') ? u : ''; };
+    var digits = function (p) { return String(p || '').replace(/[^\d+]/g, ''); };
+
+    var repCards = reps.map(function (r) {
+      var tel = digits(r.phone);
+      return '<article class="rep-card"><span class="avatar rep-avatar">' + esc(initials(r.name)) + '</span>' +
+        '<div class="rep-body"><h3>' + esc(r.name) + '</h3>' + (r.role_label ? '<p class="muted small">' + esc(r.role_label) + '</p>' : '') +
+        '<div class="rep-contacts">' +
+          (r.email ? '<a href="mailto:' + esc(r.email) + '">' + icon('mail') + esc(r.email) + '</a>' : '') +
+          (tel ? '<a href="tel:' + esc(tel) + '">' + icon('phone') + esc(r.phone) + '</a>' +
+            '<a class="wa" href="https://wa.me/' + esc(tel.replace(/^\+/, '')) + '" target="_blank" rel="noopener">' + icon('chat') + 'WhatsApp</a>' : '') +
+        '</div></div>' +
+        (admin ? '<div class="item-tools"><button class="icon-btn" type="button" data-action="edit-rep" data-id="' + r.id + '" aria-label="Modifica">' + icon('edit') + '</button>' +
+          '<button class="icon-btn danger" type="button" data-action="delete-rep" data-id="' + r.id + '" aria-label="Elimina">' + icon('trash') + '</button></div>' : '') +
+        '</article>';
+    }).join('');
+
+    var sections = INFO_SECTIONS.map(function (sec) {
+      var items = links.filter(function (l) { return l.section === sec.key; });
+      if (!items.length && !admin) return '';
+      return '<section class="panel info-section"><div class="panel-head"><h2>' + icon(sec.icon) + esc(sec.title) + '</h2>' +
+        (admin ? '<button class="btn btn-ghost btn-sm" type="button" data-action="edit-link" data-section="' + sec.key + '">' + icon('plus') + 'Aggiungi</button>' : '') + '</div>' +
+        (items.length ? '<ul class="info-list">' + items.map(function (l) {
+          var url = safeUrl(l.url);
+          var inner = '<strong>' + esc(l.label) + '</strong>' + (l.detail ? '<span class="muted small">' + esc(l.detail) + '</span>' : '');
+          return '<li>' + (url ? '<a class="info-item" href="' + esc(url) + '" target="_blank" rel="noopener">' + inner + icon('link') + '</a>' : '<div class="info-item">' + inner + '</div>') +
+            (admin ? '<div class="item-tools"><button class="icon-btn" type="button" data-action="edit-link" data-id="' + l.id + '" aria-label="Modifica">' + icon('edit') + '</button>' +
+              '<button class="icon-btn danger" type="button" data-action="delete-link" data-id="' + l.id + '" aria-label="Elimina">' + icon('trash') + '</button></div>' : '') + '</li>';
+        }).join('') + '</ul>' : '<p class="muted small">Nessun elemento.</p>') + '</section>';
+    }).join('');
+
+    render('reps',
+      '<section class="reps-hero"><div><p class="eyebrow">Scienze e Tecnologie Chimiche</p><h1>I tuoi rappresentanti</h1>' +
+        '<p>Siamo studenti come te: portiamo la voce del corso negli organi dell\'Università. Scrivici per dubbi, problemi o proposte!</p></div>' +
+        '<svg class="reps-hero-ic"><use href="#i-users"/></svg></section>' +
+      '<section class="panel"><div class="panel-head"><h2>Chi siamo</h2>' +
+        (admin ? '<button class="btn btn-ghost btn-sm" type="button" data-action="edit-rep">' + icon('plus') + 'Aggiungi rappresentante</button>' : '') + '</div>' +
+        (reps.length ? '<div class="rep-grid">' + repCards + '</div>'
+          : '<p class="muted">' + (admin ? 'Nessun rappresentante inserito: usa "Aggiungi rappresentante".' : 'I contatti dei rappresentanti saranno pubblicati presto.') + '</p>') +
+      '</section>' +
+      '<div class="info-grid">' + sections + '</div>' +
+      '<section class="panel made-by">' + icon('heart') + '<div><h2>Chi ha fatto questo sito</h2><p><strong>' + esc(CFG.platformName) +
+        '</strong> è stato realizzato con affetto da <strong>Aleksey Symonenko</strong>, rappresentante del corso, per tutti gli studenti di Scienze e Tecnologie Chimiche.</p></div></section>',
+      'Rappresentanti');
+  }
+
+  // Piccolo modulo in finestra sovrapposta (per le modifiche degli admin)
+  var modalSubmit = null;
+  function openModal(title, fieldsHtml, onSubmit) {
+    closeModal();
+    modalSubmit = onSubmit;
+    var wrap = document.createElement('div');
+    wrap.className = 'modal-backdrop';
+    wrap.innerHTML = '<form class="modal panel form" data-form="modal" role="dialog" aria-modal="true"><h2>' + esc(title) + '</h2>' + fieldsHtml +
+      '<div class="form-actions"><button class="btn btn-ghost" type="button" data-action="close-modal">Annulla</button>' +
+      '<button class="btn btn-primary" type="submit">Salva</button></div></form>';
+    document.body.appendChild(wrap);
+    var first = wrap.querySelector('input, select, textarea');
+    if (first) first.focus();
+  }
+  function closeModal() {
+    var m = document.querySelector('.modal-backdrop');
+    if (m) m.remove();
+    modalSubmit = null;
+  }
+  function input(label, name, value, attrs) {
+    return '<label>' + label + '<input type="text" name="' + name + '" value="' + esc(value || '') + '" ' + (attrs || '') + '></label>';
+  }
+
   function errorPage(title, message) {
     render('', '<div class="panel error-card"><span class="error-code">!</span><h1>' + esc(title) + '</h1><p class="muted">' + esc(message) + '</p>' +
       '<a class="btn btn-primary" href="#/">' + icon('home') + 'Torna alla dashboard</a></div>', title);
@@ -691,6 +817,7 @@
       else if (h.path === '/cerca') await searchPage(h.params);
       else if (h.path === '/miei') await minePage();
       else if (h.path === '/classifica') await rankingPage();
+      else if (h.path === '/rappresentanti') await repsPage();
       else if (h.path === '/admin') await adminPage(h.params);
       else errorPage('Pagina non trovata', 'La pagina che cerchi non esiste.');
     } catch (err) {
@@ -786,6 +913,57 @@
         catch (err) { el.disabled = false; fail(err); }
         return;
       }
+      case 'course-menu': {
+        var box = el.closest('.course-menu');
+        var wasOpen = box.classList.contains('open');
+        document.querySelectorAll('.course-menu.open').forEach(function (m) { m.classList.remove('open'); });
+        if (!wasOpen) box.classList.add('open');
+        return;
+      }
+      case 'move-course': {
+        var place = el.getAttribute('data-place');
+        el.closest('.course-menu').classList.remove('open');
+        try { await Api.moveCourse(Number(id), place); toast('Corso spostato in: ' + placementLabel(place) + '.'); route(); }
+        catch (err) { fail(err); }
+        return;
+      }
+      case 'close-modal': closeModal(); return;
+      case 'edit-rep': {
+        var r = infoCache.reps.find(function (x) { return String(x.id) === id; }) || {};
+        openModal(r.id ? 'Modifica rappresentante' : 'Nuovo rappresentante',
+          '<input type="hidden" name="id" value="' + esc(r.id || '') + '">' +
+          input('Nome e cognome *', 'name', r.name, 'required maxlength="120"') +
+          input('Ruolo / anno', 'role_label', r.role_label, 'maxlength="120" placeholder="es. 3° anno Triennale"') +
+          input('Email', 'email', r.email, 'maxlength="200" placeholder="nome.cognome@campus.unimib.it"') +
+          input('Telefono', 'phone', r.phone, 'maxlength="40" placeholder="+39 …"') +
+          input('Ordine', 'sort_order', r.sort_order != null ? r.sort_order : infoCache.reps.length + 1, 'inputmode="numeric"'),
+          function (data) { return Api.saveRepresentative(data); });
+        return;
+      }
+      case 'delete-rep': {
+        if (!confirm('Eliminare questo rappresentante?')) return;
+        try { await Api.deleteRepresentative(Number(id)); toast('Rappresentante eliminato.'); route(); } catch (err) { fail(err); }
+        return;
+      }
+      case 'edit-link': {
+        var l = infoCache.links.find(function (x) { return String(x.id) === id; }) || { section: el.getAttribute('data-section') };
+        openModal(l.id ? 'Modifica elemento' : 'Nuovo elemento',
+          '<input type="hidden" name="id" value="' + esc(l.id || '') + '">' +
+          '<label>Sezione<select name="section">' + INFO_SECTIONS.map(function (sx) {
+            return '<option value="' + sx.key + '"' + (sx.key === l.section ? ' selected' : '') + '>' + esc(sx.title) + '</option>';
+          }).join('') + '</select></label>' +
+          input('Titolo *', 'label', l.label, 'required maxlength="200"') +
+          input('Descrizione', 'detail', l.detail, 'maxlength="300"') +
+          input('Link (https://…)', 'url', l.url, 'maxlength="500" placeholder="https://"') +
+          input('Ordine', 'sort_order', l.sort_order != null ? l.sort_order : 99, 'inputmode="numeric"'),
+          function (data) { return Api.saveInfoLink(data); });
+        return;
+      }
+      case 'delete-link': {
+        if (!confirm('Eliminare questo elemento?')) return;
+        try { await Api.deleteInfoLink(Number(id)); toast('Elemento eliminato.'); route(); } catch (err) { fail(err); }
+        return;
+      }
       case 'toggle-pin': {
         var pin = !el.getAttribute('data-pinned');
         el.disabled = true;
@@ -835,6 +1013,14 @@
         return;
       }
       case 'upload': return upload(form);
+      case 'modal': {
+        if (!modalSubmit) return closeModal();
+        var save = form.querySelector('button[type=submit]');
+        save.disabled = true;
+        try { await modalSubmit(data); closeModal(); toast('Salvato.'); route(); }
+        catch (err) { save.disabled = false; fail(err); }
+        return;
+      }
     }
   }
 
@@ -899,6 +1085,8 @@
     var el = e.target.closest('[data-action]');
     var menu = document.querySelector('.user-menu.open');
     if (menu && !e.target.closest('.user-menu')) menu.classList.remove('open');
+    if (!e.target.closest('.course-menu')) document.querySelectorAll('.course-menu.open').forEach(function (m) { m.classList.remove('open'); });
+    if (e.target.classList && e.target.classList.contains('modal-backdrop')) closeModal();
     if (!el) return;
     if (el.tagName === 'A') e.preventDefault();
     handleAction(el);
@@ -911,14 +1099,6 @@
   });
   document.addEventListener('change', function (e) {
     if (e.target.matches('[data-file-input]')) showSelected(e.target);
-    if (e.target.matches('select[data-move]')) {
-      var sel = e.target;
-      sel.disabled = true;
-      Api.moveCourse(Number(sel.getAttribute('data-move')), sel.value).then(function () {
-        toast('Corso spostato in: ' + placementLabel(sel.value) + '.');
-        route();
-      }).catch(function (err) { sel.disabled = false; fail(err); });
-    }
   });
   ['dragenter', 'dragover'].forEach(function (ev) {
     document.addEventListener(ev, function (e) {
@@ -941,6 +1121,8 @@
   });
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') {
+      closeModal();
+      document.querySelectorAll('.course-menu.open').forEach(function (m) { m.classList.remove('open'); });
       document.body.classList.remove('sidebar-open');
       var menu = document.querySelector('.user-menu.open');
       if (menu) menu.classList.remove('open');

@@ -106,6 +106,26 @@ alter table public.profiles add column if not exists banned_at timestamptz;
 alter table public.profiles add column if not exists banned_reason text;
 alter table public.profiles add column if not exists banned_by uuid references public.profiles(id) on delete set null;
 
+-- Pagina "Rappresentanti": contatti e link utili, modificabili dagli admin.
+-- I contatti personali NON sono nel codice pubblico: stanno solo qui, visibili agli studenti loggati.
+create table if not exists public.representatives (
+  id         bigint generated always as identity primary key,
+  name       text not null check (char_length(name) between 1 and 120),
+  role_label text check (char_length(role_label) <= 120),      -- es. "3° anno Triennale"
+  email      text check (char_length(email) <= 200),
+  phone      text check (char_length(phone) <= 40),
+  sort_order integer not null default 0
+);
+
+create table if not exists public.info_links (
+  id         bigint generated always as identity primary key,
+  section    text not null check (section in ('siti', 'app', 'matricole', 'sicurezza', 'esami', 'rappresentanza')),
+  label      text not null check (char_length(label) between 1 and 200),
+  detail     text check (char_length(detail) <= 300),
+  url        text check (url is null or url ~ '^https://'),
+  sort_order integer not null default 0
+);
+
 create table if not exists public.reports (
   id         bigint generated always as identity primary key,
   file_id    bigint not null references public.files(id) on delete cascade,
@@ -454,6 +474,26 @@ begin
   insert into audit_log (user_id, action, details) values (auth.uid(), 'utente_riattivato', v_email);
 end $$;
 
+-- Contenuti iniziali della pagina Rappresentanti (solo informazioni pubbliche, una volta sola)
+do $$ begin
+  if not exists (select 1 from app_settings where key = 'info_seeded') then
+    insert into info_links (section, label, detail, url, sort_order) values
+      ('siti', 'e-Learning di Ateneo', 'Corsi, materiali e comunicazioni dei docenti', 'https://elearning.unimib.it/', 1),
+      ('siti', 'Gestione didattica', 'Orari delle lezioni, calendario esami, occupazione aule…', 'https://gestioneorari.didattica.unimib.it/PortaleStudentiUnimib/index.php?view=home&_lang=it', 2),
+      ('siti', 'Sito dell''Università', 'unimib.it', 'https://www.unimib.it/', 3),
+      ('siti', 'Segreteria online', 'Iscrizioni, esami, tasse e carriera', 'https://s3w.si.unimib.it/', 4),
+      ('app', 'UniMIB Course', 'Orari e aule sul telefono', 'https://play.google.com/store/apps/details?id=it.easystaff.unimib&hl=it', 1),
+      ('app', 'BicoccApp', 'L''app ufficiale dell''Ateneo', 'https://play.google.com/store/apps/details?id=it.bicoccapp.unimib&hl=it', 2),
+      ('sicurezza', 'Controllo sulle buone pratiche di sicurezza in laboratorio', 'Corso obbligatorio su e-Learning', 'https://elearning.unimib.it/course/view.php?id=28448', 1),
+      ('sicurezza', 'Formazione generale dei lavoratori', 'Corso obbligatorio su e-Learning', 'https://elearning.unimib.it/enrol/index.php?id=53765', 2),
+      ('esami', 'Chimica Generale (Di Credico)', 'Primo anno · 14 CFU', null, 1),
+      ('esami', 'Chimica Inorganica I (Scotti)', 'Secondo anno · 10 CFU', null, 2),
+      ('esami', 'Analitica Strumentale (Gosetti)', 'Terzo anno · 12 CFU', null, 3),
+      ('rappresentanza', 'Come fare il rappresentante?', 'Tutte le informazioni e i contatti', 'https://linktr.ee/splunimib', 1);
+    insert into app_settings (key, value) values ('info_seeded', 'true');
+  end if;
+end $$;
+
 -- Permessi (Row Level Security) ----------------------------------------------------
 alter table public.profiles  enable row level security;
 alter table public.courses   enable row level security;
@@ -462,6 +502,8 @@ alter table public.audit_log enable row level security;
 alter table public.file_opens enable row level security;
 alter table public.app_settings enable row level security;
 alter table public.reports enable row level security;
+alter table public.representatives enable row level security;
+alter table public.info_links enable row level security;
 revoke all on public.file_opens, public.app_settings from anon, authenticated;
 
 drop policy if exists "profili visibili agli studenti" on public.profiles;
@@ -492,6 +534,19 @@ drop policy if exists "file: solo admin eliminano" on public.files;
 create policy "file: solo admin eliminano" on public.files
   for delete to authenticated using (public.is_admin());
 
+drop policy if exists "rappresentanti: lettura studenti" on public.representatives;
+create policy "rappresentanti: lettura studenti" on public.representatives
+  for select to authenticated using (public.is_campus());
+drop policy if exists "rappresentanti: gestione admin" on public.representatives;
+create policy "rappresentanti: gestione admin" on public.representatives
+  for all to authenticated using (public.is_admin()) with check (public.is_admin());
+drop policy if exists "link: lettura studenti" on public.info_links;
+create policy "link: lettura studenti" on public.info_links
+  for select to authenticated using (public.is_campus());
+drop policy if exists "link: gestione admin" on public.info_links;
+create policy "link: gestione admin" on public.info_links
+  for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
 drop policy if exists "segnalazioni: studenti segnalano" on public.reports;
 create policy "segnalazioni: studenti segnalano" on public.reports
   for insert to authenticated with check (public.is_campus() and user_id = auth.uid());
@@ -511,6 +566,8 @@ revoke all on public.profiles, public.courses, public.files, public.audit_log, p
 grant select (id, email, name, role, created_at, points, upload_count) on public.profiles to authenticated;
 grant select on public.audit_log to authenticated;
 grant select, insert, delete on public.reports to authenticated;
+revoke all on public.representatives, public.info_links from anon;
+grant select, insert, update, delete on public.representatives, public.info_links to authenticated;
 grant select, insert, update, delete on public.courses, public.files to authenticated;
 revoke execute on function public.set_role(uuid, text) from public, anon;
 grant execute on function public.set_role(uuid, text) to authenticated;

@@ -101,9 +101,17 @@ I numeri si cambiano dallo SQL Editor di Supabase, per esempio:
 ## Corsi per laurea e anno
 
 La pagina *Corsi* è divisa in **Laurea Triennale** (1°–3° anno) e **Laurea Magistrale** (1°–2° anno);
-i corsi senza collocazione stanno in **Da assegnare**. Chi crea un corso sceglie laurea e anno;
-gli amministratori possono **spostare** un corso in qualsiasi momento dal menu sotto la sua scheda
+i corsi senza collocazione stanno in **Da assegnare**. Nel menu laterale, sotto *Corsi*, la voce
+**Anno di corso** porta direttamente a ogni anno. Chi crea un corso sceglie laurea e anno;
+gli amministratori possono **modificare o spostare** un corso dal menu **⋯** sulla sua scheda
 (o nella pagina del corso).
+
+## Pagina Rappresentanti
+
+Contatti dei rappresentanti e link utili (siti, app, corso sicurezza, esami scoglio, ecc.).
+I dati stanno nel database e sono visibili **solo agli studenti che hanno fatto l'accesso**:
+i contatti personali non compaiono mai nel codice pubblico. Gli amministratori li modificano
+direttamente dalla pagina (pulsanti *Aggiungi*, matita e cestino).
 
 ## Classifica e moderazione
 

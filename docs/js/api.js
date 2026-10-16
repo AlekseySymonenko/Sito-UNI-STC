@@ -307,6 +307,25 @@
           .order('created_at', { ascending: false }).limit(200)) || [];
       },
       async dismissReports(fileId) { check(await sb.from('reports').delete().eq('file_id', fileId)); },
+
+      // Pagina Rappresentanti
+      async listRepresentatives() { return check(await sb.from('representatives').select('*').order('sort_order').order('name')) || []; },
+      async listInfoLinks() { return check(await sb.from('info_links').select('*').order('sort_order').order('id')) || []; },
+      async saveRepresentative(r) {
+        var row = { name: clean(r.name, 120), role_label: clean(r.role_label, 120) || null, email: clean(r.email, 200) || null,
+          phone: clean(r.phone, 40) || null, sort_order: Number(r.sort_order) || 0 };
+        if (r.id) check(await sb.from('representatives').update(row).eq('id', r.id).select('id'));
+        else check(await sb.from('representatives').insert(row).select('id'));
+      },
+      async deleteRepresentative(id) { check(await sb.from('representatives').delete().eq('id', id)); },
+      async saveInfoLink(l) {
+        var row = { section: l.section, label: clean(l.label, 200), detail: clean(l.detail, 300) || null,
+          url: clean(l.url, 500) || null, sort_order: Number(l.sort_order) || 0 };
+        if (row.url && !/^https:\/\//.test(row.url)) throw new Error('Il link deve iniziare con https://');
+        if (l.id) check(await sb.from('info_links').update(row).eq('id', l.id).select('id'));
+        else check(await sb.from('info_links').insert(row).select('id'));
+      },
+      async deleteInfoLink(id) { check(await sb.from('info_links').delete().eq('id', id)); },
       async listUserFiles(userId) {
         return check(await sb.from('files').select('id, title, storage, storage_path').eq('uploaded_by', userId).limit(1000)) || [];
       },
@@ -360,6 +379,18 @@
     var blobs = {};
     var audit = [];
     var reports = [];
+    // Dati di esempio (fittizi) per l'anteprima
+    var reps = [
+      { id: 901, name: 'Mario Rossi', role_label: '3° anno Triennale', email: 'm.rossi@' + CFG.allowedDomain, phone: '+39 000 0000000', sort_order: 1 },
+      { id: 902, name: 'Giulia Bianchi', role_label: '2° anno Magistrale', email: 'g.bianchi@' + CFG.allowedDomain, phone: null, sort_order: 2 },
+    ];
+    var links = [
+      { id: 911, section: 'matricole', label: 'Gruppo WhatsApp delle matricole', detail: 'Link di esempio', url: 'https://example.com/' },
+      { id: 912, section: 'siti', label: 'e-Learning di Ateneo', detail: 'Corsi e materiali dei docenti', url: 'https://elearning.unimib.it/' },
+      { id: 913, section: 'app', label: 'BicoccApp', detail: 'L\'app ufficiale dell\'Ateneo', url: 'https://play.google.com/store/apps/details?id=it.bicoccapp.unimib&hl=it' },
+      { id: 914, section: 'esami', label: 'Chimica Generale', detail: 'Primo anno · 14 CFU', url: null },
+      { id: 915, section: 'rappresentanza', label: 'Come fare il rappresentante?', detail: 'Tutte le informazioni', url: 'https://linktr.ee/splunimib' },
+    ];
 
     function pdfBlob(title) {
       var text = 'BT /F1 26 Tf 60 760 Td (' + title.replace(/[()\\]/g, '') + ') Tj ET';
@@ -550,6 +581,21 @@
         }).filter(function (r) { return r.file; });
       },
       async dismissReports(fileId) { reports = reports.filter(function (r) { return r.file_id !== fileId; }); },
+      async listRepresentatives() { return reps.slice().sort(function (a, b) { return a.sort_order - b.sort_order; }); },
+      async listInfoLinks() { return links.slice(); },
+      async saveRepresentative(r) {
+        requireAdmin();
+        if (r.id) Object.assign(reps.find(function (x) { return x.id === Number(r.id); }), r, { id: Number(r.id) });
+        else reps.push(Object.assign({}, r, { id: ++seq, sort_order: Number(r.sort_order) || reps.length + 1 }));
+      },
+      async deleteRepresentative(id) { requireAdmin(); reps = reps.filter(function (x) { return x.id !== id; }); },
+      async saveInfoLink(l) {
+        requireAdmin();
+        if (l.url && !/^https:\/\//.test(l.url)) throw new Error('Il link deve iniziare con https://');
+        if (l.id) Object.assign(links.find(function (x) { return x.id === Number(l.id); }), l, { id: Number(l.id) });
+        else links.push(Object.assign({}, l, { id: ++seq }));
+      },
+      async deleteInfoLink(id) { requireAdmin(); links = links.filter(function (x) { return x.id !== id; }); },
       async listUserFiles(userId) { return files.filter(function (f) { return f.uploaded_by === userId; }); },
       async setRole(userId, role) {
         requireAdmin();
