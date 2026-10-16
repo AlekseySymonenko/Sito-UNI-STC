@@ -428,8 +428,8 @@
       '<div class="page-head"><div><p class="eyebrow">Gestione piattaforma</p><h1>Amministrazione</h1>' +
         '<p class="muted">Gli amministratori possono modificare i corsi ed eliminare corsi e materiali.</p></div></div>' +
       '<section class="stats">' + stat('users', stats.users, 'Utenti') + stat('book', stats.courses, 'Corsi') +
-        stat('folder', stats.files, 'Materiali') + stat('archive', bytes(stats.bytes), 'Spazio usato') + '</section>' +
-      (usage ? usagePanel(usage, preview) : '') +
+        stat('folder', stats.files, 'Materiali') + stat('archive', bytes(stats.bytes), 'Spazio usato (totale)') + '</section>' +
+      (usage ? usagePanel(usage, preview, stats) : '') +
       '<section class="panel"><div class="panel-head wrap"><h2>Utenti e ruoli</h2>' +
         '<form class="inline-search" data-form="filter-users">' + icon('search') + '<input type="search" name="q" value="' + esc(params.get('q') || '') + '" placeholder="Cerca per nome o email"></form></div>' +
         '<p class="muted small">Gli studenti compaiono qui dopo il loro primo accesso.</p>' +
@@ -455,13 +455,17 @@
       '</ul></section>', 'Amministrazione');
   }
 
-  function usagePanel(u, preview) {
-    var pct = u.quota ? Math.min(100, Math.round((u.used / u.quota) * 100)) : 0;
+  function usagePanel(u, preview, stats) {
+    var exact = u.quota ? Math.min(100, (u.used / u.quota) * 100) : 0;
+    var pct = Math.round(exact);
+    var pctLabel = u.used > 0 && exact < 1 ? 'meno dell\'1%' : pct + '%';
+    var other = stats && u.where === 'Backblaze B2' ? (stats.bytes || 0) - (stats.b2_bytes || 0) : 0;
     var level = pct >= 90 ? 'high' : pct >= 70 ? 'mid' : 'low';
     return '<section class="panel usage"><div class="panel-head"><h2>Spazio dell\'archivio</h2>' +
       '<span class="muted small">' + esc(u.where) + '</span></div>' +
-      '<div class="usage-bar usage-' + level + '"><div data-width="' + pct + '"></div></div>' +
-      '<p class="small"><strong>' + bytes(u.used) + '</strong> usati di ' + bytes(u.quota) + ' (' + pct + '%). ' +
+      '<div class="usage-bar usage-' + level + '"><div data-width="' + (u.used > 0 ? Math.max(exact, 0.8).toFixed(2) : 0) + '"></div></div>' +
+      '<p class="small"><strong>' + bytes(u.used) + '</strong> usati di ' + bytes(u.quota) + ' (' + pctLabel + ').' +
+      (other > 0 ? ' Altri <strong>' + bytes(other) + '</strong> sono sull\'archivio di Supabase (file caricati prima di B2, limite 1 GB).' : '') + ' ' +
       (u.where === 'Backblaze B2'
         ? 'Quando lo spazio non basta per un nuovo file, vengono eliminati in automatico i file meno aperti negli ultimi 6 mesi ' +
           '(mai quelli caricati da meno di 14 giorni o protetti 📌).'

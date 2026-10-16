@@ -79,7 +79,7 @@
       auth: { flowType: 'pkce', persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
     });
     var BUCKET = 'materiali';
-    var FILE_SELECT = '*, course:courses(id, name, color), uploader:profiles(name)';
+    var FILE_SELECT = '*, course:courses(id, name, color), uploader:profiles!uploaded_by(name)';
     var USE_B2 = CFG.storage === 'b2';
     var me = null;
     var urlCache = {};
