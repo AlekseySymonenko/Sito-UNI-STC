@@ -26,8 +26,8 @@ window.APP_CONFIG = {
   // Dove salvare i nuovi file:
   //   'supabase' → archivio di Supabase (1 GB totale, max 50 MB per file)
   //   'b2'       → Backblaze B2 (richiede la funzione "b2" su Supabase; max 500 MB per file)
-  storage: 'supabase',
+  storage: 'b2',
 
   // Limite per singolo file in MB (50 con 'supabase', fino a 500 con 'b2')
-  maxUploadMb: 50,
+  maxUploadMb: 500,
 };
