@@ -6,7 +6,7 @@ Object.assign(process.env, {
   SUPABASE_URL: 'https://proj.supabase.co',
   SUPABASE_ANON_KEY: 'anon',
   B2_KEY_ID: 'keyid', B2_APP_KEY: 'secret', B2_BUCKET: 'appunti',
-  B2_ENDPOINT: 's3.eu-central-003.backblazeb2.com', B2_QUOTA_GB: '1',
+  B2_ENDPOINT: 's3.eu-central-003.backblazeb2.com',
 });
 const { handler } = await import('../index.ts');
 
@@ -19,21 +19,30 @@ let calls: string[] = [];
 let used = 0;
 let headSize = 1000;
 let corsRules: unknown[] = [];
+let makeRoom: 'ok' | 'fail' = 'ok';
 const FILE = { id: 9, storage: 'b2', storage_path: 'u-stud/abc.pdf', original_name: 'Lezione è 1.pdf', kind: 'pdf' };
 
-beforeEach(() => { calls = []; used = 0; headSize = 1000; });
+beforeEach(() => { calls = []; used = 0; headSize = 1000; makeRoom = 'ok'; });
 
 globalThis.fetch = (async (input: string | URL | Request, init: RequestInit = {}) => {
   const url = new URL(String(input));
   const method = (init.method || 'GET').toUpperCase();
   const auth = new Headers(init.headers).get('Authorization') || '';
-  calls.push(`${method} ${url.host}${url.pathname}${url.search ? '?' + url.searchParams.get('X-Amz-SignedHeaders') : ''}`);
+  calls.push(`${method} ${url.host}${url.pathname}${url.searchParams.get('versionId') ? ' v=' + url.searchParams.get('versionId') : ''}`);
   const json = (d: unknown, s = 200) => new Response(JSON.stringify(d), { status: s, headers: { 'content-type': 'application/json' } });
   const who = USERS[auth.replace('Bearer ', '')];
   if (url.host === 'proj.supabase.co') {
     if (url.pathname === '/auth/v1/user') return who ? json({ id: who.id, email: who.email }) : json({ msg: 'bad jwt' }, 401);
     if (url.pathname === '/rest/v1/profiles') return json(who ? [{ id: who.id, role: who.role }] : []);
     if (url.pathname === '/rest/v1/rpc/b2_used_bytes') return json(used);
+    if (url.pathname === '/rest/v1/rpc/b2_quota_bytes') return json(1024 ** 3);
+    if (url.pathname === '/rest/v1/rpc/record_file_open') return json(null);
+    if (url.pathname === '/rest/v1/rpc/b2_make_room') {
+      calls.push('MAKE_ROOM ' + init.body);
+      if (makeRoom === 'fail') return json({ message: 'Spazio dell\'archivio esaurito: non ci sono abbastanza file vecchi o poco usati da eliminare.' }, 400);
+      used = 0;
+      return json([{ file_id: 3, path: 'u-x/old.pdf', version: 'ver-old', bytes: 500, file_title: 'Vecchia dispensa' }]);
+    }
     if (url.pathname === '/rest/v1/files' && method === 'GET') return json(url.searchParams.get('id') === 'eq.9' ? [FILE] : [FILE]);
     if (url.pathname === '/rest/v1/files' && method === 'POST') { calls.push('BODY ' + init.body); return json([{ id: 42 }], 201); }
     if (url.pathname === '/rest/v1/files' && method === 'DELETE') return new Response(null, { status: 204 });
@@ -42,7 +51,7 @@ globalThis.fetch = (async (input: string | URL | Request, init: RequestInit = {}
   if (url.pathname.endsWith('/b2_list_buckets')) return json({ buckets: [{ bucketId: 'bid', corsRules }] });
   if (url.pathname.endsWith('/b2_update_bucket')) { corsRules = JSON.parse(String(init.body)).corsRules; return json({}); }
   if (url.host === 's3.eu-central-003.backblazeb2.com') {
-    if (method === 'HEAD') return new Response(null, { status: 200, headers: { 'content-length': String(headSize) } });
+    if (method === 'HEAD') return new Response(null, { status: 200, headers: { 'content-length': String(headSize), 'x-amz-version-id': 'ver-new' } });
     if (method === 'DELETE') return new Response(null, { status: 204 });
   }
   return json({ error: 'unexpected ' + url }, 500);
@@ -60,12 +69,27 @@ test('senza login o con Gmail personale: rifiutato', async () => {
   assert.strictEqual((await call('gmail', { action: 'usage' })).status, 403);
 });
 
-test('upload: formato non ammesso, troppo grande, spazio esaurito', async () => {
+test('upload: formato non ammesso, troppo grande', async () => {
   assert.strictEqual((await call('student', { action: 'upload', name: 'x.html', size: 10 })).status, 400);
   assert.strictEqual((await call('student', { action: 'upload', name: 'x.pdf', size: 600 * 1024 * 1024 })).status, 400);
+  assert.ok(!calls.some((c) => c.startsWith('MAKE_ROOM')), 'nessuna pulizia se c\'è spazio o il file è rifiutato');
+});
+
+test('spazio pieno: elimina i file meno usati e li cancella subito da B2', async () => {
   used = 1024 ** 3 - 10;
   const r = await call('student', { action: 'upload', name: 'x.pdf', size: 100 });
+  assert.strictEqual(r.status, 200);
+  assert.deepStrictEqual(r.data.evicted, ['Vecchia dispensa']);
+  assert.ok(calls.includes('MAKE_ROOM {"needed":100}'));
+  assert.ok(calls.some((c) => c === 'DELETE s3.eu-central-003.backblazeb2.com/appunti/u-x/old.pdf v=ver-old'), 'cancellazione definitiva con versionId');
+});
+
+test('spazio pieno e niente da eliminare: caricamento rifiutato', async () => {
+  used = 1024 ** 3 - 10;
+  makeRoom = 'fail';
+  const r = await call('student', { action: 'upload', name: 'x.pdf', size: 100 });
   assert.strictEqual(r.status, 507);
+  assert.match(r.data.error, /esaurito/);
 });
 
 test('upload: link firmato nella cartella dello studente + CORS impostato una volta', async () => {
@@ -90,13 +114,22 @@ test('confirm: niente percorsi altrui, dimensione reale letta da B2', async () =
   assert.strictEqual(body.size, 12345);
   assert.strictEqual(body.storage, 'b2');
   assert.strictEqual(body.storage_path, 'u-stud/abc.pdf');
+  assert.strictEqual(body.storage_version, 'ver-new');
 });
 
-test('confirm oltre la quota: file rimosso da B2', async () => {
+test('confirm oltre la quota senza spazio liberabile: file appena caricato rimosso', async () => {
   used = 1024 ** 3;
+  makeRoom = 'fail';
   const r = await call('student', { action: 'confirm', key: 'u-stud/abc.pdf', name: 'a.pdf', courseId: 1 });
   assert.strictEqual(r.status, 507);
-  assert.ok(calls.some((c) => c.startsWith('DELETE s3.eu-central-003')));
+  assert.ok(calls.some((c) => c === 'DELETE s3.eu-central-003.backblazeb2.com/appunti/u-stud/abc.pdf v=ver-new'));
+});
+
+test('aperture contate solo quando richiesto', async () => {
+  await call('student', { action: 'url', id: 9 });
+  assert.ok(!calls.some((c) => c.includes('record_file_open')));
+  await call('student', { action: 'url', id: 9, count: true });
+  assert.ok(calls.some((c) => c.includes('record_file_open')));
 });
 
 test('url: link temporaneo con nome file e tipo corretti', async () => {

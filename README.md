@@ -78,11 +78,25 @@ limite impostato nel sito (i caricamenti si bloccano a 9,5 GB).
    incolla tutto [`supabase/functions/b2/index.ts`](supabase/functions/b2/index.ts) → *Deploy*.
    Nei dettagli della funzione disattiva **"Verify JWT"** (la funzione controlla da sola chi la chiama).
 7. **Secrets**: *Edge Functions → Secrets* → aggiungi `B2_KEY_ID`, `B2_APP_KEY`, `B2_BUCKET` (nome del
-   bucket), `B2_ENDPOINT` (l'endpoint del punto 3). Facoltativo: `B2_QUOTA_GB` (default 9.5).
+   bucket), `B2_ENDPOINT` (l'endpoint del punto 3).
 8. In [`docs/config.js`](docs/config.js) imposta `storage: 'b2'` e `maxUploadMb: 500`.
 
 I file già caricati su Supabase restano visibili; i nuovi vanno su B2.
 La chiave di B2 resta solo nei Secrets di Supabase: il sito non la vede mai.
+
+### Pulizia automatica dello spazio
+Se un nuovo file non ci sta nei 9,5 GB, il sistema elimina **solo quanto basta**, scegliendo:
+1. i file aperti meno volte negli ultimi 6 mesi (ogni studente conta al massimo una volta al giorno);
+2. a parità, quelli aperti (o caricati) meno di recente.
+
+Non vengono mai eliminati i file caricati da meno di 14 giorni né quelli **protetti 📌**
+(pulsante nella pagina del file, solo amministratori). Se non c'è abbastanza da eliminare,
+il caricamento viene rifiutato. In *Amministrazione* si vedono i prossimi file eliminabili e nel
+registro attività ogni eliminazione automatica.
+
+I numeri si cambiano dallo SQL Editor di Supabase, per esempio:
+`update app_settings set value = '30' where key = 'evict_grace_days';`
+(chiavi: `b2_quota_bytes`, `evict_grace_days`, `evict_window_days`).
 
 ## Limiti del piano gratuito
 - Spazio per i file: circa **1 GB** in totale; ogni file al massimo **50 MB**.

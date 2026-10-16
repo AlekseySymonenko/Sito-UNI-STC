@@ -342,7 +342,7 @@
     fileCache[f.id] = f;
     var k = KINDS[f.kind] || KINDS.other;
     var inline = ['pdf', 'image', 'audio', 'video'].indexOf(f.kind) >= 0;
-    var url = inline ? await Api.fileUrl(f, false) : '';
+    var url = inline ? await Api.fileUrl(f, false, true) : '';
     var viewer;
     if (f.kind === 'pdf') viewer = '<iframe src="' + esc(url) + '" title="' + esc(f.title) + '"></iframe>';
     else if (f.kind === 'image') viewer = '<a href="' + esc(url) + '" target="_blank" rel="noopener"><img src="' + esc(url) + '" alt="' + esc(f.title) + '"></a>';
@@ -362,10 +362,14 @@
             '<dt>Dimensione</dt><dd>' + bytes(f.size) + '</dd>' +
             '<dt>Caricato da</dt><dd>' + esc(f.uploader ? f.uploader.name : 'utente rimosso') + '</dd>' +
             '<dt>Data</dt><dd>' + dateTime(f.created_at) + '</dd>' +
+            '<dt>Aperture</dt><dd>' + (f.open_count || 0) + (f.last_opened_at ? ' · ultima ' + date(f.last_opened_at) : '') + '</dd>' +
           '</dl>' +
+          (f.pinned ? '<p class="pin-note">' + icon('shield') + 'Protetto: non verrà mai eliminato in automatico.</p>' : '') +
           '<div class="stack">' +
             '<button class="btn btn-primary btn-block" type="button" data-action="download" data-id="' + f.id + '">' + icon('download') + 'Scarica</button>' +
             (inline ? '<a class="btn btn-ghost btn-block" href="' + esc(url) + '" target="_blank" rel="noopener">Apri a schermo intero</a>' : '') +
+            (isAdmin() && f.storage === 'b2' ? '<button class="btn btn-ghost btn-block" type="button" data-action="toggle-pin" data-id="' + f.id + '" data-pinned="' + (f.pinned ? '1' : '') + '">' +
+              icon('shield') + (f.pinned ? 'Rimuovi protezione' : 'Proteggi dall\'eliminazione automatica') + '</button>' : '') +
             (isAdmin() ? '<button class="btn btn-danger btn-block" type="button" data-action="delete-file" data-id="' + f.id + '" data-back="#/corso/' + f.course_id + '">' + icon('trash') + 'Elimina materiale</button>' : '') +
           '</div></aside>' +
       '</div>', f.title);
@@ -408,13 +412,15 @@
     primo_accesso: 'primo accesso', file_caricato: 'file caricato', file_eliminato: 'file eliminato',
     corso_creato: 'corso creato', corso_modificato: 'corso modificato', corso_eliminato: 'corso eliminato',
     ruolo_admin_assegnato: 'admin assegnato', ruolo_admin_revocato: 'admin revocato',
+    file_eliminato_auto: 'eliminato in automatico', file_protetto: 'file protetto', file_non_protetto: 'protezione rimossa',
   };
 
   async function adminPage(params) {
     if (!isAdmin()) return errorPage('Accesso negato', 'Questa sezione è riservata agli amministratori.');
     loading('admin');
-    var res = await Promise.all([Api.stats(), Api.listUsers(), Api.listAudit(), Api.usage().catch(function () { return null; })]);
-    var stats = res[0], audit = res[2], usage = res[3];
+    var res = await Promise.all([Api.stats(), Api.listUsers(), Api.listAudit(), Api.usage().catch(function () { return null; }),
+      Api.evictionPreview().catch(function () { return []; })]);
+    var stats = res[0], audit = res[2], usage = res[3], preview = res[4];
     var q = (params.get('q') || '').toLowerCase();
     var users = res[1].filter(function (u) { return !q || (u.name + ' ' + u.email).toLowerCase().indexOf(q) >= 0; })
       .sort(function (a, b) { return (a.role === 'admin' ? 0 : 1) - (b.role === 'admin' ? 0 : 1) || a.name.localeCompare(b.name); });
@@ -423,7 +429,7 @@
         '<p class="muted">Gli amministratori possono modificare i corsi ed eliminare corsi e materiali.</p></div></div>' +
       '<section class="stats">' + stat('users', stats.users, 'Utenti') + stat('book', stats.courses, 'Corsi') +
         stat('folder', stats.files, 'Materiali') + stat('archive', bytes(stats.bytes), 'Spazio usato') + '</section>' +
-      (usage ? usagePanel(usage) : '') +
+      (usage ? usagePanel(usage, preview) : '') +
       '<section class="panel"><div class="panel-head wrap"><h2>Utenti e ruoli</h2>' +
         '<form class="inline-search" data-form="filter-users">' + icon('search') + '<input type="search" name="q" value="' + esc(params.get('q') || '') + '" placeholder="Cerca per nome o email"></form></div>' +
         '<p class="muted small">Gli studenti compaiono qui dopo il loro primo accesso.</p>' +
@@ -449,14 +455,23 @@
       '</ul></section>', 'Amministrazione');
   }
 
-  function usagePanel(u) {
+  function usagePanel(u, preview) {
     var pct = u.quota ? Math.min(100, Math.round((u.used / u.quota) * 100)) : 0;
     var level = pct >= 90 ? 'high' : pct >= 70 ? 'mid' : 'low';
     return '<section class="panel usage"><div class="panel-head"><h2>Spazio dell\'archivio</h2>' +
       '<span class="muted small">' + esc(u.where) + '</span></div>' +
       '<div class="usage-bar usage-' + level + '"><div data-width="' + pct + '"></div></div>' +
       '<p class="small"><strong>' + bytes(u.used) + '</strong> usati di ' + bytes(u.quota) + ' (' + pct + '%). ' +
-      (pct >= 90 ? 'Lo spazio sta per finire: elimina i file non più necessari.' : 'Quando lo spazio finisce, i caricamenti vengono bloccati: nessun costo.') + '</p></section>';
+      (u.where === 'Backblaze B2'
+        ? 'Quando lo spazio non basta per un nuovo file, vengono eliminati in automatico i file meno aperti negli ultimi 6 mesi ' +
+          '(mai quelli caricati da meno di 14 giorni o protetti 📌).'
+        : 'Quando lo spazio finisce, i caricamenti vengono bloccati: nessun costo.') + '</p>' +
+      (preview && preview.length ? '<h3 class="usage-sub">Primi file che verrebbero eliminati</h3><ol class="evict-list">' +
+        preview.map(function (p) {
+          return '<li><a href="#/file/' + p.file_id + '">' + esc(p.file_title) + '</a><span class="muted small">' + bytes(p.bytes) + ' · ' +
+            p.opens + ' apertur' + (Number(p.opens) === 1 ? 'a' : 'e') + ' · ultima attività ' + date(p.last_activity) + '</span></li>';
+        }).join('') + '</ol>' : '') +
+      '</section>';
   }
 
   function errorPage(title, message) {
@@ -488,7 +503,7 @@
   // ---- Azioni ------------------------------------------------------------------------
   async function download(id) {
     var f = fileCache[id] || await Api.getFile(Number(id));
-    var url = await Api.fileUrl(f, true);
+    var url = await Api.fileUrl(f, true, true);
     var a = document.createElement('a');
     a.href = url;
     a.download = f.original_name;
@@ -535,6 +550,16 @@
         el.disabled = true;
         try { await Api.deleteCourse(Number(id)); toast('Corso «' + name + '» eliminato.'); go('#/corsi'); }
         catch (err) { el.disabled = false; fail(err); }
+        return;
+      }
+      case 'toggle-pin': {
+        var pin = !el.getAttribute('data-pinned');
+        el.disabled = true;
+        try {
+          await Api.setPinned(Number(id), pin);
+          toast(pin ? 'File protetto: non verrà eliminato in automatico.' : 'Protezione rimossa.');
+          route();
+        } catch (err) { el.disabled = false; fail(err); }
         return;
       }
       case 'set-role': {
@@ -598,19 +623,25 @@
     btn.disabled = true;
     progress.hidden = false;
     var done = 0;
+    var evicted = [];
     try {
       for (var i = 0; i < files.length; i++) {
         var prefix = files.length > 1 ? 'File ' + (i + 1) + ' di ' + files.length + ' · ' : '';
         label.textContent = prefix + '0%';
         bar.style.width = Math.round((i / files.length) * 100) + '%';
-        await Api.uploadFile(courseId, files[i], { title: title, description: description }, function (p) {
+        var result = await Api.uploadFile(courseId, files[i], { title: title, description: description }, function (p) {
           bar.style.width = Math.round(((i + p) / files.length) * 100) + '%';
           label.textContent = prefix + (p < 1 ? Math.round(p * 100) + '%' : 'Salvataggio…');
         });
+        if (result && result.evicted) evicted = evicted.concat(result.evicted);
         done++;
         bar.style.width = Math.round((done / files.length) * 100) + '%';
       }
       toast(done === 1 ? 'File caricato con successo.' : done + ' file caricati con successo.');
+      if (evicted.length) {
+        toast('Per fare spazio ' + (evicted.length === 1 ? 'è stato rimosso 1 file poco usato' : 'sono stati rimossi ' + evicted.length + ' file poco usati') +
+          ': ' + evicted.join(', '), 'info');
+      }
       route();
     } catch (err) {
       fail(err);

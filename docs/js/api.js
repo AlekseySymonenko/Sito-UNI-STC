@@ -227,14 +227,15 @@
         if (USE_B2) {
           var up = await b2({ action: 'upload', name: file.name, size: file.size });
           await putWithProgress(up.url, file, up.contentType, onProgress);
-          return (await b2({
+          var done = await b2({
             action: 'confirm', key: up.key, name: file.name, courseId: courseId,
             title: clean(meta.title, 200), description: clean(meta.description, 2000),
-          })).id;
+          });
+          return { id: done.id, evicted: up.evicted || [] };
         }
         var path = me.id + '/' + uuid() + '.' + t.ext;
         check(await sb.storage.from(BUCKET).upload(path, file, { contentType: t.mime, upsert: false, cacheControl: '3600' }));
-        return check(await sb.from('files').insert({
+        return { evicted: [], id: check(await sb.from('files').insert({
           course_id: courseId,
           title: clean(meta.title, 200) || baseName(file.name),
           description: clean(meta.description, 2000) || null,
@@ -243,10 +244,12 @@
           mime: t.mime,
           kind: t.kind,
           size: file.size,
-        }).select('id').single()).id;
+        }).select('id').single()).id };
       },
 
-      async fileUrl(file, download) {
+      async fileUrl(file, download, count) {
+        // Conta un'apertura (al massimo una al giorno per studente, lo decide il database)
+        if (count) sb.rpc('record_file_open', { fid: file.id }).then(function () {}, function () {});
         if (file.storage === 'b2') {
           var ck = file.id + (download ? ':d' : ':v');
           var hit = urlCache[ck];
@@ -276,6 +279,13 @@
       },
 
       async setRole(userId, role) { check(await sb.rpc('set_role', { target: userId, new_role: role })); },
+
+      async setPinned(fileId, value) { check(await sb.rpc('set_pinned', { fid: fileId, value: Boolean(value) })); },
+
+      async evictionPreview() {
+        if (!USE_B2) return [];
+        return check(await sb.rpc('b2_eviction_preview', { lim: 5 })) || [];
+      },
 
       // Spazio usato rispetto al limite dell'archivio in uso
       async usage() {
@@ -446,9 +456,15 @@
         await wait();
         var id = addFile(courseId, file.name, file, clean(meta.title, 200), me.id, 0, clean(meta.description, 2000));
         log('file_caricato', file.name);
-        return id;
+        return { id: id, evicted: [] };
       },
       async fileUrl(file) { return URL.createObjectURL(blobs[file.id]); },
+      async setPinned(fileId, value) {
+        requireAdmin();
+        var f = files.find(function (x) { return x.id === fileId; });
+        if (f) f.pinned = Boolean(value);
+      },
+      async evictionPreview() { return []; },
       async usage() {
         return { used: files.reduce(function (a, f) { return a + f.size; }, 0), quota: 10 * 1024 * 1024 * 1024, where: 'anteprima' };
       },

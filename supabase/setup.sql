@@ -59,6 +59,32 @@ do $$ begin
 exception when duplicate_object then null;
 end $$;
 
+-- Statistiche di utilizzo per la pulizia automatica dell'archivio B2
+alter table public.files add column if not exists storage_version text;
+alter table public.files add column if not exists open_count integer not null default 0;
+alter table public.files add column if not exists last_opened_at timestamptz;
+alter table public.files add column if not exists pinned boolean not null default false;
+
+-- Aperture: ogni studente conta al massimo una volta al giorno per file
+create table if not exists public.file_opens (
+  file_id bigint not null references public.files(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  day     date not null default current_date,
+  primary key (file_id, user_id, day)
+);
+create index if not exists file_opens_day_idx on public.file_opens(file_id, day);
+
+-- Impostazioni modificabili dagli amministratori (via SQL Editor)
+create table if not exists public.app_settings (
+  key   text primary key,
+  value text not null
+);
+insert into public.app_settings (key, value) values
+  ('b2_quota_bytes', '10200547328'),   -- 9,5 GB: sotto i 10 GB gratuiti di Backblaze
+  ('evict_grace_days', '14'),          -- i file più recenti di così non vengono mai eliminati
+  ('evict_window_days', '180')         -- periodo in cui si contano le aperture
+on conflict (key) do nothing;
+
 create table if not exists public.audit_log (
   id         bigint generated always as identity primary key,
   user_id    uuid references public.profiles(id) on delete set null,
@@ -141,8 +167,13 @@ begin
       insert into audit_log (user_id, action, details)
       values (auth.uid(), 'file_caricato', new.original_name || ' → ' || (select name from courses where id = new.course_id));
     elsif tg_op = 'DELETE' then
-      insert into audit_log (user_id, action, details)
-      values (auth.uid(), 'file_eliminato', old.original_name);
+      if current_setting('app.auto_evict', true) = '1' then
+        insert into audit_log (user_id, action, details)
+        values (null, 'file_eliminato_auto', old.original_name || ' (' || old.open_count || ' aperture)');
+      else
+        insert into audit_log (user_id, action, details)
+        values (auth.uid(), 'file_eliminato', old.original_name);
+      end if;
     end if;
   elsif tg_table_name = 'courses' then
     if tg_op = 'INSERT' then
@@ -203,11 +234,109 @@ returns bigint language sql stable security definer set search_path = public as 
   select case when public.is_campus() then (select coalesce(sum(size), 0) from files where storage = 'b2') end
 $$;
 
+create or replace function public.setting_int(k text, fallback bigint)
+returns bigint language sql stable security definer set search_path = public as $$
+  select coalesce((select value::bigint from app_settings where key = k), fallback)
+$$;
+
+create or replace function public.b2_quota_bytes()
+returns bigint language sql stable security definer set search_path = public as $$
+  select case when public.is_campus() then public.setting_int('b2_quota_bytes', 10200547328) end
+$$;
+
+-- Registra un'apertura (vista o download) di un file
+create or replace function public.record_file_open(fid bigint)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_campus() or not exists (select 1 from files where id = fid) then return; end if;
+  insert into file_opens (file_id, user_id, day) values (fid, auth.uid(), current_date)
+  on conflict do nothing;
+  if found then
+    update files set open_count = open_count + 1, last_opened_at = now() where id = fid;
+  else
+    update files set last_opened_at = now() where id = fid;
+  end if;
+end $$;
+
+-- File eliminabili automaticamente, dal meno utile al più utile
+create or replace function public.b2_eviction_order()
+returns table(file_id bigint, file_title text, bytes bigint, opens bigint, last_activity timestamptz, path text, version text)
+language sql stable security definer set search_path = public as $$
+  select f.id, f.title, f.size,
+         (select count(*) from file_opens o
+           where o.file_id = f.id and o.day > current_date - public.setting_int('evict_window_days', 180)::int),
+         coalesce(f.last_opened_at, f.created_at),
+         f.storage_path, f.storage_version
+  from files f
+  where f.storage = 'b2' and not f.pinned
+    and f.created_at < now() - make_interval(days => public.setting_int('evict_grace_days', 14)::int)
+  order by 4 asc, 5 asc, f.id asc
+$$;
+revoke execute on function public.b2_eviction_order() from public, anon, authenticated;
+
+-- Anteprima per gli amministratori: i prossimi file che verrebbero eliminati
+create or replace function public.b2_eviction_preview(lim integer default 5)
+returns table(file_id bigint, file_title text, bytes bigint, opens bigint, last_activity timestamptz)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception 'Operazione riservata agli amministratori'; end if;
+  return query select e.file_id, e.file_title, e.bytes, e.opens, e.last_activity
+    from public.b2_eviction_order() e limit greatest(1, least(lim, 50));
+end $$;
+
+-- Fa spazio per un nuovo caricamento eliminando SOLO il necessario.
+-- Restituisce i file eliminati (la funzione "B2" li cancella poi da Backblaze).
+create or replace function public.b2_make_room(needed bigint)
+returns table(file_id bigint, path text, version text, bytes bigint, file_title text)
+language plpgsql security definer set search_path = public as $$
+declare
+  v_needed  bigint := greatest(0, least(coalesce(needed, 0), 524288000));  -- max 500 MB
+  v_deficit bigint;
+  v_avail   bigint;
+begin
+  if not public.is_campus() then raise exception 'Accesso negato'; end if;
+  v_deficit := (select coalesce(sum(size), 0) from files where storage = 'b2') + v_needed
+               - public.setting_int('b2_quota_bytes', 10200547328);
+  if v_deficit <= 0 then return; end if;
+  select coalesce(sum(e.bytes), 0) into v_avail from public.b2_eviction_order() e;
+  if v_avail < v_deficit then
+    raise exception 'Spazio dell''archivio esaurito: non ci sono abbastanza file vecchi o poco usati da eliminare.';
+  end if;
+  perform set_config('app.auto_evict', '1', true);
+  return query
+    with ranked as (
+      select e.file_id, e.bytes,
+             sum(e.bytes) over (order by e.opens, e.last_activity, e.file_id) as running
+      from public.b2_eviction_order() e
+    ), deleted as (
+      delete from files f using ranked r
+      where f.id = r.file_id and r.running - r.bytes < v_deficit
+      returning f.id, f.storage_path, f.storage_version, f.size, f.title
+    )
+    select * from deleted;
+  perform set_config('app.auto_evict', '', true);
+end $$;
+
+-- Protegge un file dall'eliminazione automatica (solo amministratori)
+create or replace function public.set_pinned(fid bigint, value boolean)
+returns void language plpgsql security definer set search_path = public as $$
+declare v_title text;
+begin
+  if not public.is_admin() then raise exception 'Operazione riservata agli amministratori'; end if;
+  update files set pinned = value where id = fid returning title into v_title;
+  if v_title is null then raise exception 'File non trovato'; end if;
+  insert into audit_log (user_id, action, details)
+  values (auth.uid(), case when value then 'file_protetto' else 'file_non_protetto' end, v_title);
+end $$;
+
 -- Permessi (Row Level Security) ----------------------------------------------------
 alter table public.profiles  enable row level security;
 alter table public.courses   enable row level security;
 alter table public.files     enable row level security;
 alter table public.audit_log enable row level security;
+alter table public.file_opens enable row level security;
+alter table public.app_settings enable row level security;
+revoke all on public.file_opens, public.app_settings from anon, authenticated;
 
 drop policy if exists "profili visibili agli studenti" on public.profiles;
 create policy "profili visibili agli studenti" on public.profiles

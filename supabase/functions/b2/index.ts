@@ -5,7 +5,8 @@
 //  Via Editor → nome "b2" → incolla TUTTO questo file → Deploy.
 //  Poi in Edge Functions → Secrets aggiungi:
 //    B2_KEY_ID, B2_APP_KEY, B2_BUCKET, B2_ENDPOINT  (es. s3.eu-central-003.backblazeb2.com)
-//    B2_QUOTA_GB (facoltativo, default 9.5)        ALLOWED_ORIGIN (facoltativo)
+//    ALLOWED_ORIGIN (facoltativo)
+//  Il limite di spazio (9,5 GB) è nel database: tabella app_settings, chiave b2_quota_bytes.
 //
 //  Cosa fa: verifica chi chiama (solo account @campus.unimib.it), poi rilascia
 //  link temporanei firmati per caricare/scaricare i file su B2. Le chiavi di B2
@@ -99,7 +100,6 @@ function b2Config() {
   const region = (/^s3\.([a-z0-9-]+)\.backblazeb2\.com$/.exec(host) || [])[1] || env('B2_REGION');
   const cfg = {
     host, region, bucket: env('B2_BUCKET'), accessKey: env('B2_KEY_ID'), secretKey: env('B2_APP_KEY'),
-    quotaBytes: Math.round(Number(env('B2_QUOTA_GB', '9.5')) * 1024 ** 3),
   };
   if (!cfg.host || !cfg.region || !cfg.bucket || !cfg.accessKey || !cfg.secretKey) {
     throw new HttpError(500, 'Archivio B2 non configurato: mancano dei Secrets nella funzione.');
@@ -144,9 +144,14 @@ async function currentUser(req: Request) {
   return { id: user.id as string, email, role: rows[0].role as string };
 }
 
+const rpc = (req: Request, name: string, args: Record<string, unknown> = {}) =>
+  sbJson(req, '/rest/v1/rpc/' + name, { method: 'POST', body: JSON.stringify(args) });
+
 async function usedBytes(req: Request) {
-  const n = await sbJson(req, '/rest/v1/rpc/b2_used_bytes', { method: 'POST', body: '{}' });
-  return Number(n) || 0;
+  return Number(await rpc(req, 'b2_used_bytes')) || 0;
+}
+async function quotaBytes(req: Request) {
+  return Number(await rpc(req, 'b2_quota_bytes')) || Math.round(9.5 * 1024 ** 3);
 }
 
 async function getFile(req: Request, id: unknown) {
@@ -160,8 +165,10 @@ async function getFile(req: Request, id: unknown) {
 const sign = (b2: B2, method: string, key: string, expires = URL_TTL, query?: Record<string, string>) =>
   presign({ method, key, expires, query, host: b2.host, region: b2.region, bucket: b2.bucket, accessKey: b2.accessKey, secretKey: b2.secretKey });
 
-async function b2Delete(b2: B2, key: string) {
-  const res = await fetch(await sign(b2, 'DELETE', key, 300), { method: 'DELETE' });
+// Con la versione indicata il file viene cancellato subito e per sempre
+// (altrimenti B2 lo terrebbe "nascosto" occupando ancora spazio).
+async function b2Delete(b2: B2, key: string, version?: string | null) {
+  const res = await fetch(await sign(b2, 'DELETE', key, 300, version ? { versionId: version } : undefined), { method: 'DELETE' });
   if (!res.ok && res.status !== 404) throw new HttpError(502, 'Eliminazione su B2 non riuscita (' + res.status + ').');
 }
 
@@ -204,6 +211,22 @@ async function ensureCors(b2: B2, origin: string) {
   corsReady = true;
 }
 
+// Se il nuovo file non ci sta, elimina i file meno usati (regole nel database:
+// b2_make_room) e li cancella da B2. Restituisce i titoli dei file rimossi.
+async function makeRoom(req: Request, b2: B2, size: number) {
+  if ((await usedBytes(req)) + size <= (await quotaBytes(req))) return [];
+  let removed: { path: string; version: string | null; file_title: string }[];
+  try {
+    removed = await rpc(req, 'b2_make_room', { needed: size });
+  } catch (err) {
+    throw new HttpError(507, err instanceof Error ? err.message : 'Spazio dell\'archivio esaurito.');
+  }
+  for (const r of removed) {
+    try { await b2Delete(b2, r.path, r.version); } catch (err) { console.error('Pulizia B2', r.path, err); }
+  }
+  return removed.map((r) => r.file_title);
+}
+
 // ---- Azioni ----------------------------------------------------------------------------------
 async function handle(req: Request, body: Record<string, unknown>) {
   const user = await currentUser(req);
@@ -212,7 +235,7 @@ async function handle(req: Request, body: Record<string, unknown>) {
 
   switch (body.action) {
     case 'usage':
-      return { used: await usedBytes(req), quota: b2.quotaBytes, maxFileMb: MAX_FILE_MB };
+      return { used: await usedBytes(req), quota: await quotaBytes(req), maxFileMb: MAX_FILE_MB };
 
     case 'upload': {
       const name = String(body.name || '');
@@ -220,13 +243,11 @@ async function handle(req: Request, body: Record<string, unknown>) {
       const t = typeFor(name);
       if (!t) throw new HttpError(400, 'Formato non ammesso: ' + name);
       if (!(size > 0) || size > MAX_FILE_MB * 1024 * 1024) throw new HttpError(400, 'Il file supera il limite di ' + MAX_FILE_MB + ' MB.');
-      if ((await usedBytes(req)) + size > b2.quotaBytes) {
-        throw new HttpError(507, 'Spazio dell\'archivio esaurito. Contatta un amministratore.');
-      }
       const origin = env('ALLOWED_ORIGIN') || req.headers.get('Origin') || '';
       if (origin) await ensureCors(b2, origin);
+      const evicted = await makeRoom(req, b2, size);
       const key = `${user.id}/${crypto.randomUUID()}.${t.ext}`;
-      return { key, url: await sign(b2, 'PUT', key, 900), contentType: t.mime };
+      return { key, url: await sign(b2, 'PUT', key, 900), contentType: t.mime, evicted };
     }
 
     case 'confirm': {
@@ -239,9 +260,16 @@ async function handle(req: Request, body: Record<string, unknown>) {
       const head = await fetch(await sign(b2, 'HEAD', key, 300), { method: 'HEAD' });
       if (!head.ok) throw new HttpError(400, 'Il file non risulta caricato. Riprova.');
       const size = Number(head.headers.get('content-length')) || 0;
-      if (size > MAX_FILE_MB * 1024 * 1024 || (await usedBytes(req)) + size > b2.quotaBytes) {
-        await b2Delete(b2, key);
-        throw new HttpError(507, 'Spazio dell\'archivio esaurito o file troppo grande.');
+      const version = head.headers.get('x-amz-version-id');
+      if (size > MAX_FILE_MB * 1024 * 1024) {
+        await b2Delete(b2, key, version);
+        throw new HttpError(400, 'Il file supera il limite di ' + MAX_FILE_MB + ' MB.');
+      }
+      try {
+        await makeRoom(req, b2, size); // nel caso altri abbiano caricato nel frattempo
+      } catch (err) {
+        await b2Delete(b2, key, version);
+        throw err;
       }
       const clean = (v: unknown, max: number) => String(v ?? '').trim().slice(0, max);
       try {
@@ -255,6 +283,7 @@ async function handle(req: Request, body: Record<string, unknown>) {
             original_name: name,
             storage_path: key,
             storage: 'b2',
+            storage_version: version,
             mime: t.mime.split(';')[0],
             kind: t.kind,
             size,
@@ -262,7 +291,7 @@ async function handle(req: Request, body: Record<string, unknown>) {
         });
         return { id: rows[0].id };
       } catch (err) {
-        await b2Delete(b2, key);
+        await b2Delete(b2, key, version);
         throw err;
       }
     }
@@ -271,6 +300,7 @@ async function handle(req: Request, body: Record<string, unknown>) {
       // Link temporaneo per vedere o scaricare (solo per chi può leggere il file: RLS).
       const f = await getFile(req, body.id);
       if (f.storage !== 'b2') throw new HttpError(400, 'Il file non è su B2.');
+      if (body.count) await rpc(req, 'record_file_open', { fid: f.id }).catch(() => null);
       const t = typeFor(f.storage_path);
       const name = String(f.original_name);
       const ascii = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
@@ -285,7 +315,7 @@ async function handle(req: Request, body: Record<string, unknown>) {
     case 'delete': {
       if (!isAdmin) throw new HttpError(403, 'Solo gli amministratori possono eliminare i file.');
       const f = await getFile(req, body.id);
-      if (f.storage === 'b2') await b2Delete(b2, f.storage_path);
+      if (f.storage === 'b2') await b2Delete(b2, f.storage_path, f.storage_version);
       await sbJson(req, `/rest/v1/files?id=eq.${f.id}`, { method: 'DELETE' });
       return { ok: true };
     }
@@ -294,8 +324,8 @@ async function handle(req: Request, body: Record<string, unknown>) {
       if (!isAdmin) throw new HttpError(403, 'Solo gli amministratori possono eliminare i corsi.');
       const courseId = Number(body.courseId);
       if (!Number.isInteger(courseId)) throw new HttpError(400, 'Corso non valido.');
-      const rows = await sbJson(req, `/rest/v1/files?select=storage_path&storage=eq.b2&course_id=eq.${courseId}`);
-      for (const r of rows) await b2Delete(b2, r.storage_path);
+      const rows = await sbJson(req, `/rest/v1/files?select=storage_path,storage_version&storage=eq.b2&course_id=eq.${courseId}`);
+      for (const r of rows) await b2Delete(b2, r.storage_path, r.storage_version);
       return { deleted: rows.length };
     }
 

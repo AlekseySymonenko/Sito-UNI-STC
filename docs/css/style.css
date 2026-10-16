@@ -473,3 +473,11 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: color-m
 .usage-bar > div { height: 100%; width: 0; border-radius: 99px; background: var(--ok); transition: width .4s; }
 .usage-mid > div { background: var(--accent); }
 .usage-high > div { background: var(--err); }
+.flash-info { background: var(--accent-soft); color: color-mix(in srgb, var(--accent) 45%, #000); border-color: color-mix(in srgb, var(--accent) 35%, #fff); }
+.pin-note { display: flex; gap: 8px; align-items: center; font-size: .84rem; color: var(--ok); background: var(--ok-soft); padding: 8px 10px; border-radius: 8px; margin: 0 0 14px; }
+.pin-note svg { width: 16px; height: 16px; }
+.usage-sub { font-family: var(--font); font-size: .9rem; font-weight: 600; margin: 16px 0 6px; }
+.evict-list { margin: 0; padding-left: 1.2rem; display: grid; gap: 6px; font-size: .88rem; }
+.evict-list li span { display: block; }
+.a-file_eliminato_auto { background: var(--err-soft); color: var(--err); }
+.a-file_protetto { background: var(--ok-soft); color: var(--ok); }
