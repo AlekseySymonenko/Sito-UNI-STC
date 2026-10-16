@@ -114,3 +114,6 @@ supabase/
 Test della funzione B2: node --experimental-strip-types --test supabase/functions/b2/test/*.test.ts
 ```
 I permessi sono imposti dal database (Row Level Security), non dall'interfaccia.
+
+Dopo ogni modifica a CSS/JS aggiorna il numero `?v=` in `docs/index.html`, così i browser
+scaricano subito i file nuovi invece di usare quelli in memoria.
