@@ -2,6 +2,18 @@
 (function () {
   'use strict';
 
+  // Versione del sito: deve coincidere con data-v in index.html. Se Safari ha in
+  // memoria una pagina principale vecchia, la ricarichiamo (una volta) aggirando la cache.
+  var VERSION = '20261016g';
+  if (document.documentElement.getAttribute('data-v') !== VERSION) {
+    var tried = false;
+    try { tried = sessionStorage.getItem('reload-v') === VERSION; sessionStorage.setItem('reload-v', VERSION); } catch (e) { /* ignora */ }
+    if (!tried) {
+      location.replace(location.pathname + '?v=' + VERSION + Date.now().toString(36) + location.hash);
+      return;
+    }
+  }
+
   var CFG = window.APP_CONFIG;
   var Api = window.Api;
   var root = document.getElementById('app');
@@ -517,8 +529,20 @@
       '</section>';
   }
 
+  function ensureLeagues() {
+    if (window.Leagues) return Promise.resolve();
+    return new Promise(function (resolve, reject) {
+      var sc = document.createElement('script');
+      sc.src = 'js/leagues.js?v=' + VERSION;
+      sc.onload = function () { resolve(); };
+      sc.onerror = function () { reject(new Error('Impossibile caricare la classifica: ricarica la pagina.')); };
+      document.head.appendChild(sc);
+    });
+  }
+
   async function rankingPage() {
     loading('ranking');
+    await ensureLeagues();
     var list = await Api.leaderboard();
     var L = window.Leagues;
     list.forEach(function (r) { r.league = L.leagueFor(r.points, Number(r.rank_pos)); });

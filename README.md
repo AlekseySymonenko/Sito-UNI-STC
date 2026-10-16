@@ -145,5 +145,6 @@ Test della funzione B2: node --experimental-strip-types --test supabase/function
 ```
 I permessi sono imposti dal database (Row Level Security), non dall'interfaccia.
 
-Dopo ogni modifica a CSS/JS aggiorna il numero `?v=` in `docs/index.html`, così i browser
-scaricano subito i file nuovi invece di usare quelli in memoria.
+Dopo ogni modifica a CSS/JS aggiorna il numero di versione in tre punti: i `?v=` e `data-v`
+in `docs/index.html` e `VERSION` in `docs/js/app.js`. Se un browser tiene in memoria una pagina
+vecchia, il sito se ne accorge e si ricarica da solo.
