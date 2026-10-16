@@ -142,7 +142,7 @@
     var k = KINDS[f.kind] || KINDS.other;
     return '<li class="file-item">' +
       '<a class="file-thumb kind-' + f.kind + '" href="#/file/' + f.id + '" tabindex="-1" aria-hidden="true">' +
-        (f.kind === 'image' ? '<img alt="" data-thumb="' + f.id + '">' : icon(k.icon)) + '</a>' +
+        (f.kind === 'image' && f.storage !== 'b2' ? '<img alt="" data-thumb="' + f.id + '">' : icon(k.icon)) + '</a>' +
       '<div class="file-body">' +
         '<a class="file-title" href="#/file/' + f.id + '">' + esc(f.title) + '</a>' +
         '<div class="file-meta"><span class="tag kind-' + f.kind + '">' + k.label + '</span>' +
