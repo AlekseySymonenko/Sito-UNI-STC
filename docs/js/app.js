@@ -115,7 +115,7 @@
   }
 
   function render(active, body, title) {
-    document.title = (title ? title + ' · ' : '') + CFG.platformName + ' ' + CFG.shortName;
+    document.title = (title ? title + ' · ' : '') + CFG.platformName;
     root.innerHTML = shell(active, body);
     document.body.classList.remove('sidebar-open');
     window.scrollTo(0, 0);
@@ -171,7 +171,7 @@
 
   // ---- Pagine -------------------------------------------------------------------------
   function loginPage(error) {
-    document.title = 'Accesso · ' + CFG.platformName + ' ' + CFG.shortName;
+    document.title = 'Accesso · ' + CFG.platformName;
     root.innerHTML = '' +
       '<div class="login-grid">' +
         '<section class="login-hero"><div class="hero-pattern" aria-hidden="true"></div>' +

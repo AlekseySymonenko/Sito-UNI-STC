@@ -20,7 +20,7 @@ window.APP_CONFIG = {
 
   universityName: 'Università degli Studi di Milano-Bicocca',
   shortName: 'Bicocca',
-  platformName: 'e-Learning',
+  platformName: 'Appunti per STC',
   disclaimer: 'Progetto studentesco non ufficiale',
 
   // Limite per singolo file (il piano gratuito di Supabase arriva a 50 MB)
