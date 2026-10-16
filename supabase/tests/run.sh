@@ -10,5 +10,7 @@ createdb $DB ${PGUSER:+-U $PGUSER}
 $PSQL -q -d $DB -f "$DIR/supabase_stubs.sql"
 PGOPTIONS="-c client_min_messages=warning" $PSQL -q -d $DB -f "$DIR/../setup.sql"
 PGOPTIONS="-c client_min_messages=warning" $PSQL -q -d $DB -f "$DIR/../setup.sql"   # deve poter essere rieseguito
+PGOPTIONS="-c client_min_messages=warning" $PSQL -q -d $DB -f "$DIR/../professori.sql"
+PGOPTIONS="-c client_min_messages=warning" $PSQL -q -d $DB -f "$DIR/../professori.sql"   # rieseguito: nessun doppione
 $PSQL -d $DB -f "$DIR/rls_test.sql" 2>&1 >/dev/null | sed 's/^psql:[^ ]* NOTICE:  /  /'
 dropdb $DB ${PGUSER:+-U $PGUSER}

@@ -117,6 +117,20 @@ create table if not exists public.representatives (
   sort_order integer not null default 0
 );
 
+-- Docenti del corso (pagina "Professori"); i dati iniziali sono in supabase/professori.sql
+create table if not exists public.professors (
+  id             bigint generated always as identity primary key,
+  last_name      text not null check (char_length(last_name) between 1 and 80),
+  first_name     text not null check (char_length(first_name) between 1 and 80),
+  email          text check (char_length(email) <= 200),
+  department     text check (char_length(department) <= 120),
+  research_group text check (char_length(research_group) <= 300),
+  research_area  text check (char_length(research_area) <= 500),
+  positions      text check (char_length(positions) <= 1000),   -- un ruolo per riga
+  courses        text check (char_length(courses) <= 3000),     -- un corso per riga
+  education      text check (char_length(education) <= 200)
+);
+
 create table if not exists public.info_links (
   id         bigint generated always as identity primary key,
   section    text not null check (section in ('siti', 'app', 'matricole', 'sicurezza', 'esami', 'rappresentanza')),
@@ -504,6 +518,7 @@ alter table public.app_settings enable row level security;
 alter table public.reports enable row level security;
 alter table public.representatives enable row level security;
 alter table public.info_links enable row level security;
+alter table public.professors enable row level security;
 revoke all on public.file_opens, public.app_settings from anon, authenticated;
 
 drop policy if exists "profili visibili agli studenti" on public.profiles;
@@ -540,6 +555,13 @@ create policy "rappresentanti: lettura studenti" on public.representatives
 drop policy if exists "rappresentanti: gestione admin" on public.representatives;
 create policy "rappresentanti: gestione admin" on public.representatives
   for all to authenticated using (public.is_admin()) with check (public.is_admin());
+drop policy if exists "docenti: lettura studenti" on public.professors;
+create policy "docenti: lettura studenti" on public.professors
+  for select to authenticated using (public.is_campus());
+drop policy if exists "docenti: gestione admin" on public.professors;
+create policy "docenti: gestione admin" on public.professors
+  for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
 drop policy if exists "link: lettura studenti" on public.info_links;
 create policy "link: lettura studenti" on public.info_links
   for select to authenticated using (public.is_campus());
@@ -566,8 +588,8 @@ revoke all on public.profiles, public.courses, public.files, public.audit_log, p
 grant select (id, email, name, role, created_at, points, upload_count) on public.profiles to authenticated;
 grant select on public.audit_log to authenticated;
 grant select, insert, delete on public.reports to authenticated;
-revoke all on public.representatives, public.info_links from anon;
-grant select, insert, update, delete on public.representatives, public.info_links to authenticated;
+revoke all on public.representatives, public.info_links, public.professors from anon;
+grant select, insert, update, delete on public.representatives, public.info_links, public.professors to authenticated;
 grant select, insert, update, delete on public.courses, public.files to authenticated;
 revoke execute on function public.set_role(uuid, text) from public, anon;
 grant execute on function public.set_role(uuid, text) to authenticated;

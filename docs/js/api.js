@@ -336,6 +336,20 @@
         else check(await sb.from('info_links').insert(row).select('id'));
       },
       async deleteInfoLink(id) { check(await sb.from('info_links').delete().eq('id', id)); },
+
+      // Pagina Professori
+      async listProfessors() { return check(await sb.from('professors').select('*').order('last_name').order('first_name')) || []; },
+      async saveProfessor(d) {
+        var row = {
+          last_name: clean(d.last_name, 80), first_name: clean(d.first_name, 80), email: clean(d.email, 200) || null,
+          department: clean(d.department, 120) || null, research_group: clean(d.research_group, 300) || null,
+          research_area: clean(d.research_area, 500) || null, positions: clean(d.positions, 1000) || null,
+          courses: clean(d.courses, 3000) || null, education: clean(d.education, 200) || null,
+        };
+        if (d.id) check(await sb.from('professors').update(row).eq('id', d.id).select('id'));
+        else check(await sb.from('professors').insert(row).select('id'));
+      },
+      async deleteProfessor(id) { check(await sb.from('professors').delete().eq('id', id)); },
       async listUserFiles(userId) {
         return check(await sb.from('files').select('id, title, storage, storage_path').eq('uploaded_by', userId).limit(1000)) || [];
       },
@@ -393,6 +407,12 @@
     var reps = [
       { id: 901, name: 'Mario Rossi', role_label: '3° anno Triennale', email: 'm.rossi@' + CFG.allowedDomain, phone: '+39 000 0000000', sort_order: 1 },
       { id: 902, name: 'Giulia Bianchi', role_label: '2° anno Magistrale', email: 'g.bianchi@' + CFG.allowedDomain, phone: null, sort_order: 2 },
+    ];
+    // Docenti fittizi per l'anteprima
+    var profs = [
+      { id: 921, last_name: 'Bianchi', first_name: 'Anna', email: 'anna.bianchi@example.org', department: 'Scienza dei materiali', research_group: 'Gruppo Esempio: Bianchi, Verdi', research_area: 'Sintesi di materiali per l\'energia', positions: 'Professore ordinario\nDirettrice del laboratorio', courses: 'Chimica generale\nChimica inorganica 1', education: 'Chimica' },
+      { id: 922, last_name: 'Verdi', first_name: 'Paolo', email: 'paolo.verdi@example.org', department: 'DISAT', research_group: null, research_area: 'Chimica analitica ambientale', positions: 'Professore associato', courses: 'Chimica analitica\nChimica analitica strumentale', education: 'Chimica, Scienze ambientali' },
+      { id: 923, last_name: 'Neri', first_name: 'Sara', email: 'sara.neri@example.org', department: 'Biotecnologie e bioscienze', research_group: 'Lab Esempio: Neri', research_area: 'Studi con NMR', positions: 'Ricercatore a tempo determinato', courses: 'Chimica organica 2', education: 'Biotecnologie' },
     ];
     var links = [
       { id: 911, section: 'matricole', label: 'Gruppo WhatsApp delle matricole', detail: 'Link di esempio', url: 'https://example.com/' },
@@ -606,6 +626,13 @@
         else links.push(Object.assign({}, l, { id: ++seq }));
       },
       async deleteInfoLink(id) { requireAdmin(); links = links.filter(function (x) { return x.id !== id; }); },
+      async listProfessors() { return profs.slice().sort(function (a, b) { return a.last_name.localeCompare(b.last_name); }); },
+      async saveProfessor(d) {
+        requireAdmin();
+        if (d.id) Object.assign(profs.find(function (x) { return x.id === Number(d.id); }), d, { id: Number(d.id) });
+        else profs.push(Object.assign({}, d, { id: ++seq }));
+      },
+      async deleteProfessor(id) { requireAdmin(); profs = profs.filter(function (x) { return x.id !== id; }); },
       async listUserFiles(userId) { return files.filter(function (f) { return f.uploaded_by === userId; }); },
       async setRole(userId, role) {
         requireAdmin();

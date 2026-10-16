@@ -208,6 +208,13 @@ select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000
 select pg_temp.expect(not (my_status() ->> 'banned')::boolean and (select count(*) from profiles) >= 3, 'riattivato: accesso ripristinato');
 reset role;
 
+-- ===== Docenti =====
+select pg_temp.expect((select count(*) from professors) = 62, 'elenco docenti caricato una sola volta (62)');
+select pg_temp.expect((select courses from professors where last_name = 'Di Credico') like 'Chimica generale%', 'dati docenti corretti');
+set role anon;
+select pg_temp.expect_error('select * from professors', 'anonimo non vede i docenti');
+reset role;
+
 -- ===== Pagina Rappresentanti =====
 set role anon;
 select pg_temp.expect_error('select * from representatives', 'anonimo non vede i rappresentanti');
@@ -216,10 +223,14 @@ set role authenticated;
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000b","email":"n.cognome@campus.unimib.it"}', false);
 select pg_temp.expect((select count(*) from info_links) >= 10, 'studenti vedono i link utili precaricati');
 select pg_temp.expect_error($q$insert into representatives (name) values ('Intruso')$q$, 'studenti non aggiungono rappresentanti');
+select pg_temp.expect((select count(*) from professors) = 62, 'studenti vedono i docenti');
+update professors set email = 'hack@x.it';
+select pg_temp.expect(not exists (select 1 from professors where email = 'hack@x.it'), 'studenti non modificano i docenti');
 update info_links set label = 'hack';
 select pg_temp.expect(not exists (select 1 from info_links where label = 'hack'), 'studenti non modificano i link');
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000c","email":"intruso@gmail.com"}', false);
 select pg_temp.expect((select count(*) from info_links) = 0, 'esterni non vedono la pagina');
+select pg_temp.expect((select count(*) from professors) = 0, 'esterni non vedono i docenti');
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000a","email":"admin.uno@campus.unimib.it"}', false);
 insert into representatives (name, role_label, email, sort_order) values ('Rappresentante Prova', '3° anno Triennale', 'r.prova@campus.unimib.it', 1);
 select pg_temp.expect((select count(*) from representatives) = 1, 'admin aggiungono rappresentanti');

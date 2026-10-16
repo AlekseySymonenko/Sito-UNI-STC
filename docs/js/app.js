@@ -4,7 +4,7 @@
 
   // Versione del sito: deve coincidere con data-v in index.html. Se Safari ha in
   // memoria una pagina principale vecchia, la ricarichiamo (una volta) aggirando la cache.
-  var VERSION = '20261016l';
+  var VERSION = '20261016m';
   if (document.documentElement.getAttribute('data-v') !== VERSION) {
     var tried = false;
     try { tried = sessionStorage.getItem('reload-v') === VERSION; sessionStorage.setItem('reload-v', VERSION); } catch (e) { /* ignora */ }
@@ -108,6 +108,7 @@
           nav('#/classifica', 'ranking', 'trophy', 'Classifica') +
           '<p class="nav-label">Corso di studi</p>' +
           nav('#/rappresentanti', 'reps', 'users', 'Rappresentanti') +
+          nav('#/professori', 'profs', 'user', 'Professori') +
           (isAdmin() ? '<p class="nav-label">Gestione</p>' + nav('#/admin', 'admin', 'shield', 'Amministrazione') : '') +
         '</nav>' +
         '<div class="sidebar-foot">' + icon('lock') + '<span>Accesso riservato agli account @' + esc(CFG.allowedDomain) + '</span></div>' +
@@ -815,6 +816,82 @@
       'Rappresentanti');
   }
 
+  var profCache = [];
+  async function profsPage() {
+    profDept = '';
+    loading('profs');
+    var list;
+    try { list = profCache = await Api.listProfessors(); }
+    catch (err) {
+      return errorPage('Pagina non ancora pronta', 'Un amministratore deve aggiornare il database (setup.sql) per attivare questa pagina.');
+    }
+    var admin = isAdmin();
+    var lines = function (t) { return String(t || '').split('\n').map(function (x) { return x.trim(); }).filter(Boolean); };
+    var depts = list.map(function (p) { return p.department; }).filter(function (d, i, a) { return d && a.indexOf(d) === i; }).sort();
+    var letter = '';
+    var rows = list.map(function (p) {
+      var roles = lines(p.positions), courses = lines(p.courses);
+      var head = '';
+      var l = (p.last_name || '?').replace(/^d'/i, '').charAt(0).toUpperCase();
+      if (l !== letter) { letter = l; head = '<li class="prof-letter" data-letter>' + esc(l) + '</li>'; }
+      var search = [p.last_name, p.first_name, p.email, p.department, p.research_group, p.research_area, p.positions, p.courses, p.education].join(' ').toLowerCase();
+      var dd = function (label, value) { return value ? '<dt>' + label + '</dt><dd>' + value + '</dd>' : ''; };
+      return head + '<li class="prof-item" data-dept="' + esc(p.department || '') + '" data-search="' + esc(search) + '"><details class="prof-row">' +
+        '<summary><span class="avatar sm">' + esc(initials(p.first_name + ' ' + p.last_name)) + '</span>' +
+          '<span class="prof-name"><strong>' + esc(p.last_name) + '</strong> ' + esc(p.first_name) + '</span>' +
+          '<span class="prof-role muted small">' + esc(roles[0] || '') + '</span>' +
+          (p.department ? '<span class="pill">' + esc(p.department) + '</span>' : '') +
+          '<span class="prof-count muted small">' + courses.length + ' cors' + (courses.length === 1 ? 'o' : 'i') + '</span>' +
+          icon('chevron') + '</summary>' +
+        '<div class="prof-details"><dl>' +
+          dd('Email', p.email ? '<a href="mailto:' + esc(p.email) + '">' + esc(p.email) + '</a>' : '') +
+          dd('Ruoli', roles.length ? roles.map(esc).join('<br>') : '') +
+          dd('Insegna', courses.length ? '<ul class="chips">' + courses.map(function (c) { return '<li>' + esc(c) + '</li>'; }).join('') + '</ul>' : '') +
+          dd('Ambito di ricerca', esc(p.research_area || '')) +
+          dd('Gruppo di ricerca', esc(p.research_group || '')) +
+          dd('Dipartimento', esc(p.department || '')) +
+          dd('Formazione', esc(p.education || '')) +
+        '</dl>' +
+        (admin ? '<div class="item-tools"><button class="btn btn-ghost btn-sm" type="button" data-action="edit-prof" data-id="' + p.id + '">' + icon('edit') + 'Modifica</button>' +
+          '<button class="btn btn-ghost btn-sm danger-text" type="button" data-action="delete-prof" data-id="' + p.id + '">' + icon('trash') + 'Elimina</button></div>' : '') +
+        '</div></details></li>';
+    }).join('');
+    render('profs',
+      '<div class="page-head"><div><p class="eyebrow">Scienze e Tecnologie Chimiche</p><h1>Professori</h1>' +
+        '<p class="muted">' + list.length + ' docenti. Tocca un nome per vedere corsi, ricerca e contatti.</p></div>' +
+        (admin ? '<button class="btn btn-primary" type="button" data-action="edit-prof">' + icon('plus') + 'Aggiungi docente</button>' : '') + '</div>' +
+      '<div class="prof-toolbar"><div class="input-ic grow">' + icon('search') +
+        '<input type="search" data-prof-search placeholder="Cerca per nome, corso, ricerca o gruppo… (es. analitica)"></div></div>' +
+      (depts.length ? '<div class="prof-depts" role="group" aria-label="Dipartimento"><button type="button" class="chip-btn active" data-action="prof-dept" data-dept="">Tutti</button>' +
+        depts.map(function (d) { return '<button type="button" class="chip-btn" data-action="prof-dept" data-dept="' + esc(d) + '">' + esc(d) + '</button>'; }).join('') + '</div>' : '') +
+      '<section class="panel prof-panel">' + (list.length ? '<ul class="prof-list">' + rows + '</ul><p class="muted small prof-none" hidden>Nessun docente corrisponde alla ricerca.</p>'
+        : '<p class="muted">Nessun docente inserito.</p>') + '</section>',
+      'Professori');
+  }
+  var profDept = '';
+  function filterProfs() {
+    var input = document.querySelector('[data-prof-search]');
+    var q = input ? input.value.trim().toLowerCase() : '';
+    var shown = 0;
+    document.querySelectorAll('.prof-item').forEach(function (li) {
+      var ok = (!profDept || li.getAttribute('data-dept') === profDept) && (!q || li.getAttribute('data-search').indexOf(q) >= 0);
+      li.hidden = !ok;
+      if (ok) shown++;
+    });
+    // nasconde le lettere senza docenti visibili
+    document.querySelectorAll('.prof-letter').forEach(function (h) {
+      var n = h.nextElementSibling, any = false;
+      while (n && !n.classList.contains('prof-letter')) { if (!n.hidden) any = true; n = n.nextElementSibling; }
+      h.hidden = !any;
+    });
+    var none = document.querySelector('.prof-none');
+    if (none) none.hidden = shown > 0;
+  }
+  function textarea(label, name, value, hint) {
+    return '<label>' + label + (hint ? ' <small class="muted">' + hint + '</small>' : '') +
+      '<textarea name="' + name + '" rows="3">' + esc(value || '') + '</textarea></label>';
+  }
+
   // Piccolo modulo in finestra sovrapposta (per le modifiche degli admin)
   var modalSubmit = null;
   function openModal(title, fieldsHtml, onSubmit) {
@@ -859,6 +936,7 @@
       else if (h.path === '/miei') await minePage();
       else if (h.path === '/classifica') await rankingPage();
       else if (h.path === '/rappresentanti') await repsPage();
+      else if (h.path === '/professori') await profsPage();
       else if (h.path === '/admin') await adminPage(h.params);
       else errorPage('Pagina non trovata', 'La pagina che cerchi non esiste.');
     } catch (err) {
@@ -1014,6 +1092,32 @@
         try { await Api.deleteInfoLink(Number(id)); toast('Elemento eliminato.'); route(); } catch (err) { fail(err); }
         return;
       }
+      case 'prof-dept': {
+        profDept = el.getAttribute('data-dept');
+        document.querySelectorAll('.chip-btn[data-action="prof-dept"]').forEach(function (b) { b.classList.toggle('active', b === el); });
+        filterProfs();
+        return;
+      }
+      case 'edit-prof': {
+        var pr = profCache.find(function (x) { return String(x.id) === id; }) || {};
+        openModal(pr.id ? 'Modifica docente' : 'Nuovo docente',
+          '<input type="hidden" name="id" value="' + esc(pr.id || '') + '">' +
+          '<div class="form-row">' + input('Cognome *', 'last_name', pr.last_name, 'required maxlength="80"') + input('Nome *', 'first_name', pr.first_name, 'required maxlength="80"') + '</div>' +
+          input('Email', 'email', pr.email, 'maxlength="200"') +
+          input('Dipartimento', 'department', pr.department, 'maxlength="120"') +
+          textarea('Ruoli', 'positions', pr.positions, '(uno per riga)') +
+          textarea('Corsi in cui insegna', 'courses', pr.courses, '(uno per riga)') +
+          textarea('Ambito di ricerca', 'research_area', pr.research_area) +
+          input('Gruppo di ricerca', 'research_group', pr.research_group, 'maxlength="300"') +
+          input('Formazione', 'education', pr.education, 'maxlength="200"'),
+          function (data) { return Api.saveProfessor(data); });
+        return;
+      }
+      case 'delete-prof': {
+        if (!confirm('Eliminare questo docente dall\'elenco?')) return;
+        try { await Api.deleteProfessor(Number(id)); toast('Docente eliminato.'); route(); } catch (err) { fail(err); }
+        return;
+      }
       case 'toggle-pin': {
         var pin = !el.getAttribute('data-pinned');
         el.disabled = true;
@@ -1146,6 +1250,9 @@
     if (!form) return;
     e.preventDefault();
     handleForm(form);
+  });
+  document.addEventListener('input', function (e) {
+    if (e.target.matches('[data-prof-search]')) filterProfs();
   });
   document.addEventListener('change', function (e) {
     if (e.target.matches('[data-file-input]')) showSelected(e.target);

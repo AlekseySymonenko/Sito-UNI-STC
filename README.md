@@ -117,6 +117,15 @@ I dati stanno nel database e sono visibili **solo agli studenti che hanno fatto 
 i contatti personali non compaiono mai nel codice pubblico. Gli amministratori li modificano
 direttamente dalla pagina (pulsanti *Aggiungi*, matita e cestino).
 
+## Pagina Professori
+
+Elenco dei docenti (62, da *informazioni_professori, aprile 2026*): una riga compatta per docente
+che si apre con un tocco mostrando email, ruoli, corsi, ambito e gruppo di ricerca, dipartimento e
+formazione. Ricerca istantanea (nome, corso, ricerca, gruppo) e filtro per dipartimento.
+Visibile solo agli studenti loggati; gli amministratori possono aggiungere, modificare ed eliminare.
+I dati iniziali si caricano una volta con [`supabase/professori.sql`](supabase/professori.sql)
+(SQL Editor → Run; non crea doppioni se rieseguito).
+
 ## Classifica e moderazione
 
 **Classifica a leghe** (menu *Classifica*): Ferro, Bronzo, Argento, Oro, Platino, Smeraldo e

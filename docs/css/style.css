@@ -652,3 +652,39 @@ a.info-item > svg { position: absolute; right: 12px; top: 50%; transform: transl
 .aa-select { display: flex; align-items: center; gap: 8px; padding: 0 6px 0 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); font-size: .86rem; font-weight: 600; color: var(--ink-2); }
 .aa-select svg { width: 16px; height: 16px; color: var(--primary); }
 .aa-select select { border: 0; box-shadow: none !important; min-width: 0; width: auto; padding: .6rem .4rem; font-weight: 600; background: transparent; }
+
+/* ---------- Pagina Professori ---------- */
+.prof-toolbar { display: flex; gap: 10px; margin-bottom: 12px; }
+.prof-depts { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+.chip-btn { padding: 6px 12px; border-radius: 99px; border: 1px solid var(--line); background: var(--surface); font: inherit; font-size: .84rem; color: var(--ink-2); cursor: pointer; }
+.chip-btn:hover { border-color: color-mix(in srgb, var(--primary) 40%, var(--line)); }
+.chip-btn.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+.prof-panel { padding: 8px 12px; }
+.prof-list { list-style: none; margin: 0; padding: 0; }
+.prof-letter { font-family: var(--serif); font-weight: 700; color: var(--primary); font-size: .95rem; padding: 12px 10px 4px; border-bottom: 1px solid var(--line-2); }
+.prof-item { border-bottom: 1px solid var(--line-2); }
+.prof-item:last-child { border-bottom: 0; }
+.prof-row summary { list-style: none; display: flex; align-items: center; gap: 12px; padding: 9px 10px; cursor: pointer; border-radius: 10px; }
+.prof-row summary::-webkit-details-marker { display: none; }
+.prof-row summary:hover { background: #fbfaf8; }
+.prof-row summary > svg:last-child { width: 16px; height: 16px; color: var(--muted); margin-left: 4px; transition: transform .2s; flex-shrink: 0; }
+.prof-row[open] summary > svg:last-child { transform: rotate(90deg); }
+.prof-row[open] summary { background: var(--primary-soft); }
+.prof-name { min-width: 190px; }
+.prof-role { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pill { font-size: .74rem; font-weight: 600; padding: 3px 9px; border-radius: 99px; background: var(--line-2); color: var(--ink-2); white-space: nowrap; }
+.prof-count { white-space: nowrap; min-width: 58px; text-align: right; }
+.prof-details { padding: 6px 10px 14px 56px; }
+.prof-details dl { display: grid; grid-template-columns: 140px 1fr; gap: 6px 14px; margin: 0; font-size: .9rem; }
+.prof-details dt { color: var(--muted); }
+.prof-details dd { margin: 0; }
+.prof-details .item-tools { margin-top: 12px; }
+.chips { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; }
+.chips li { font-size: .82rem; padding: 3px 10px; border-radius: 8px; background: var(--accent-soft); color: var(--ink-2); }
+@media (max-width: 760px) {
+  .prof-role, .prof-count { display: none; }
+  .prof-name { min-width: 0; flex: 1; }
+  .prof-details { padding-left: 10px; }
+  .prof-details dl { grid-template-columns: 1fr; gap: 2px; }
+  .prof-details dt { margin-top: 8px; }
+}
