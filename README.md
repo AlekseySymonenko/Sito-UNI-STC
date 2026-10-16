@@ -59,6 +59,31 @@ Poi dalla pagina **Amministrazione** puoi nominare altri amministratori.
 
 ---
 
+## Archivio grande con Backblaze B2 (facoltativo, 10 GB gratis)
+
+Al posto dell'archivio di Supabase (1 GB) i file possono andare su **Backblaze B2**:
+10 GB gratuiti, file fino a 500 MB, nessun costo grazie al tetto di spesa a 0 $ e al
+limite impostato nel sito (i caricamenti si bloccano a 9,5 GB).
+
+1. **Account**: su <https://www.backblaze.com/sign-up/cloud-storage> registrati (meglio con l'email
+   dei rappresentanti) scegliendo la regione **EU Central**.
+2. **Tetto di spesa**: menu *Caps & Alerts* → imposta **tutti i limiti giornalieri a $0** → *Update*.
+3. **Bucket**: *Buckets → Create a Bucket* → nome univoco (es. `appunti-stc-bicocca-2026`),
+   *Files in Bucket*: **Private** → *Create*. Annota l'**Endpoint** (es. `s3.eu-central-003.backblazeb2.com`).
+4. **Chiave**: *Application Keys → Add a New Application Key* → nome `sito`,
+   *Allow access to Bucket(s)*: **All**, *Type of Access*: **Read and Write** → *Create*.
+   Copia subito **keyID** e **applicationKey** (la seconda viene mostrata una sola volta).
+5. **Database**: su Supabase riesegui tutto [`supabase/setup.sql`](supabase/setup.sql) nello SQL Editor.
+6. **Funzione**: Supabase → *Edge Functions → Deploy a new function → Via Editor* → nome **`b2`** →
+   incolla tutto [`supabase/functions/b2/index.ts`](supabase/functions/b2/index.ts) → *Deploy*.
+   Nei dettagli della funzione disattiva **"Verify JWT"** (la funzione controlla da sola chi la chiama).
+7. **Secrets**: *Edge Functions → Secrets* → aggiungi `B2_KEY_ID`, `B2_APP_KEY`, `B2_BUCKET` (nome del
+   bucket), `B2_ENDPOINT` (l'endpoint del punto 3). Facoltativo: `B2_QUOTA_GB` (default 9.5).
+8. In [`docs/config.js`](docs/config.js) imposta `storage: 'b2'` e `maxUploadMb: 500`.
+
+I file già caricati su Supabase restano visibili; i nuovi vanno su B2.
+La chiave di B2 resta solo nei Secrets di Supabase: il sito non la vede mai.
+
 ## Limiti del piano gratuito
 - Spazio per i file: circa **1 GB** in totale; ogni file al massimo **50 MB**.
 - Se nessuno usa il sito per **7 giorni**, Supabase mette in pausa il progetto: i dati restano,
@@ -84,6 +109,8 @@ docs/            il sito (HTML, CSS, JavaScript) pubblicato da GitHub Pages
   js/app.js      pagine e interfaccia
 supabase/
   setup.sql      tabelle, permessi (Row Level Security) e archivio file
+  functions/b2/  funzione che firma i link di caricamento/scaricamento su Backblaze B2
   tests/         test dei permessi su PostgreSQL locale: sh supabase/tests/run.sh
+Test della funzione B2: node --experimental-strip-types --test supabase/functions/b2/test/*.test.ts
 ```
 I permessi sono imposti dal database (Row Level Security), non dall'interfaccia.

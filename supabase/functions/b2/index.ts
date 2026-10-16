@@ -1,0 +1,330 @@
+// =============================================================================
+//  Funzione "b2" — archivio file su Backblaze B2 per Appunti per STC
+//
+//  COME INSTALLARLA: Supabase → Edge Functions → Deploy a new function →
+//  Via Editor → nome "b2" → incolla TUTTO questo file → Deploy.
+//  Poi in Edge Functions → Secrets aggiungi:
+//    B2_KEY_ID, B2_APP_KEY, B2_BUCKET, B2_ENDPOINT  (es. s3.eu-central-003.backblazeb2.com)
+//    B2_QUOTA_GB (facoltativo, default 9.5)        ALLOWED_ORIGIN (facoltativo)
+//
+//  Cosa fa: verifica chi chiama (solo account @campus.unimib.it), poi rilascia
+//  link temporanei firmati per caricare/scaricare i file su B2. Le chiavi di B2
+//  restano qui, sul server: il browser non le vede mai.
+// =============================================================================
+
+const ALLOWED_DOMAIN = 'campus.unimib.it';
+const MAX_FILE_MB = 500;
+const URL_TTL = 3600; // secondi di validità dei link firmati
+
+// Formati ammessi (stessa lista del sito): estensione → [MIME, tipo]
+const TYPES: Record<string, [string, string]> = {
+  pdf: ['application/pdf', 'pdf'],
+  jpg: ['image/jpeg', 'image'], jpeg: ['image/jpeg', 'image'], png: ['image/png', 'image'],
+  gif: ['image/gif', 'image'], webp: ['image/webp', 'image'], avif: ['image/avif', 'image'],
+  mp3: ['audio/mpeg', 'audio'], m4a: ['audio/mp4', 'audio'], aac: ['audio/aac', 'audio'],
+  wav: ['audio/wav', 'audio'], ogg: ['audio/ogg', 'audio'], oga: ['audio/ogg', 'audio'],
+  opus: ['audio/opus', 'audio'], flac: ['audio/flac', 'audio'],
+  mp4: ['video/mp4', 'video'], webm: ['video/webm', 'video'], mov: ['video/quicktime', 'video'],
+  doc: ['application/msword', 'document'],
+  docx: ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'document'],
+  ppt: ['application/vnd.ms-powerpoint', 'document'],
+  pptx: ['application/vnd.openxmlformats-officedocument.presentationml.presentation', 'document'],
+  xls: ['application/vnd.ms-excel', 'document'],
+  xlsx: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'document'],
+  odt: ['application/vnd.oasis.opendocument.text', 'document'],
+  odp: ['application/vnd.oasis.opendocument.presentation', 'document'],
+  ods: ['application/vnd.oasis.opendocument.spreadsheet', 'document'],
+  txt: ['text/plain; charset=utf-8', 'document'], md: ['text/plain; charset=utf-8', 'document'],
+  zip: ['application/zip', 'other'],
+};
+
+export function typeFor(name: string) {
+  const m = /\.([a-z0-9]+)$/i.exec(name || '');
+  const ext = m ? m[1].toLowerCase() : '';
+  const t = TYPES[ext];
+  return t ? { ext, mime: t[0], kind: t[1] } : null;
+}
+
+// ---- Firma AWS Signature V4 (link "presigned", compatibile S3) -----------------
+const enc = new TextEncoder();
+const hex = (buf: ArrayBuffer) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+const sha256 = async (s: string) => hex(await crypto.subtle.digest('SHA-256', enc.encode(s)));
+async function hmac(key: ArrayBuffer | Uint8Array, msg: string) {
+  const k = await crypto.subtle.importKey('raw', key, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return crypto.subtle.sign('HMAC', k, enc.encode(msg));
+}
+// Codifica URI secondo le regole di SigV4
+const uriEncode = (s: string, keepSlash = false) =>
+  [...enc.encode(s)].map((b) => {
+    const c = String.fromCharCode(b);
+    if (/[A-Za-z0-9\-_.~]/.test(c) || (keepSlash && c === '/')) return c;
+    return '%' + b.toString(16).toUpperCase().padStart(2, '0');
+  }).join('');
+
+export async function presign(opts: {
+  method: string; host: string; region: string; bucket: string; key: string;
+  accessKey: string; secretKey: string; expires: number; date?: Date;
+  query?: Record<string, string>;
+}) {
+  const d = opts.date || new Date();
+  const amzDate = d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  const day = amzDate.slice(0, 8);
+  const scope = `${day}/${opts.region}/s3/aws4_request`;
+  const path = (opts.bucket ? `/${opts.bucket}` : "") + `/${uriEncode(opts.key, true)}`;
+  const params: Record<string, string> = {
+    'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
+    'X-Amz-Credential': `${opts.accessKey}/${scope}`,
+    'X-Amz-Date': amzDate,
+    'X-Amz-Expires': String(opts.expires),
+    'X-Amz-SignedHeaders': 'host',
+    ...(opts.query || {}),
+  };
+  const qs = Object.keys(params).sort().map((k) => `${uriEncode(k)}=${uriEncode(params[k])}`).join('&');
+  const canonical = [opts.method, path, qs, `host:${opts.host}\n`, 'host', 'UNSIGNED-PAYLOAD'].join('\n');
+  const toSign = ['AWS4-HMAC-SHA256', amzDate, scope, await sha256(canonical)].join('\n');
+  let k: ArrayBuffer = await hmac(enc.encode('AWS4' + opts.secretKey), day);
+  for (const part of [opts.region, 's3', 'aws4_request']) k = await hmac(k, part);
+  const signature = hex(await hmac(k, toSign));
+  return `https://${opts.host}${path}?${qs}&X-Amz-Signature=${signature}`;
+}
+
+// ---- Configurazione ---------------------------------------------------------------
+function env(name: string, fallback = '') {
+  // deno-lint-ignore no-explicit-any
+  const g = globalThis as any;
+  return (g.Deno ? g.Deno.env.get(name) : g.process?.env?.[name]) || fallback;
+}
+function b2Config() {
+  const host = env('B2_ENDPOINT').replace(/^https?:\/\//, '').replace(/\/$/, '');
+  const region = (/^s3\.([a-z0-9-]+)\.backblazeb2\.com$/.exec(host) || [])[1] || env('B2_REGION');
+  const cfg = {
+    host, region, bucket: env('B2_BUCKET'), accessKey: env('B2_KEY_ID'), secretKey: env('B2_APP_KEY'),
+    quotaBytes: Math.round(Number(env('B2_QUOTA_GB', '9.5')) * 1024 ** 3),
+  };
+  if (!cfg.host || !cfg.region || !cfg.bucket || !cfg.accessKey || !cfg.secretKey) {
+    throw new HttpError(500, 'Archivio B2 non configurato: mancano dei Secrets nella funzione.');
+  }
+  return cfg;
+}
+type B2 = ReturnType<typeof b2Config>;
+
+class HttpError extends Error {
+  status: number;
+  constructor(status: number, message: string) { super(message); this.status = status; }
+}
+
+// ---- Supabase (con il token dell'utente: valgono le regole del database) ------------
+function sbFetch(req: Request, path: string, init: RequestInit = {}) {
+  const apikey = env('SUPABASE_ANON_KEY') || req.headers.get('apikey') || '';
+  return fetch(env('SUPABASE_URL') + path, {
+    ...init,
+    headers: {
+      apikey,
+      Authorization: req.headers.get('Authorization') || '',
+      'Content-Type': 'application/json',
+      ...(init.headers || {}),
+    },
+  });
+}
+async function sbJson(req: Request, path: string, init: RequestInit = {}) {
+  const res = await sbFetch(req, path, init);
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!res.ok) throw new HttpError(res.status === 401 ? 401 : 400, (data && (data.message || data.msg)) || 'Errore del database');
+  return data;
+}
+
+async function currentUser(req: Request) {
+  if (!/^Bearer\s+\S+/.test(req.headers.get('Authorization') || '')) throw new HttpError(401, 'Accesso richiesto.');
+  const user = await sbJson(req, '/auth/v1/user').catch(() => null);
+  const email = String(user?.email || '').toLowerCase();
+  if (!user?.id || !email.endsWith('@' + ALLOWED_DOMAIN)) throw new HttpError(403, 'Accesso riservato agli account @' + ALLOWED_DOMAIN + '.');
+  const rows = await sbJson(req, `/rest/v1/profiles?select=id,role&id=eq.${user.id}`);
+  if (!rows?.length) throw new HttpError(403, 'Profilo non trovato.');
+  return { id: user.id as string, email, role: rows[0].role as string };
+}
+
+async function usedBytes(req: Request) {
+  const n = await sbJson(req, '/rest/v1/rpc/b2_used_bytes', { method: 'POST', body: '{}' });
+  return Number(n) || 0;
+}
+
+async function getFile(req: Request, id: unknown) {
+  if (!Number.isInteger(id)) throw new HttpError(400, 'File non valido.');
+  const rows = await sbJson(req, `/rest/v1/files?select=*&id=eq.${id}`);
+  if (!rows?.length) throw new HttpError(404, 'File non trovato.');
+  return rows[0];
+}
+
+// ---- Operazioni su B2 ------------------------------------------------------------------
+const sign = (b2: B2, method: string, key: string, expires = URL_TTL, query?: Record<string, string>) =>
+  presign({ method, key, expires, query, host: b2.host, region: b2.region, bucket: b2.bucket, accessKey: b2.accessKey, secretKey: b2.secretKey });
+
+async function b2Delete(b2: B2, key: string) {
+  const res = await fetch(await sign(b2, 'DELETE', key, 300), { method: 'DELETE' });
+  if (!res.ok && res.status !== 404) throw new HttpError(502, 'Eliminazione su B2 non riuscita (' + res.status + ').');
+}
+
+// Imposta (una volta) la regola CORS che permette al sito di caricare file su B2.
+let corsReady = false;
+async function ensureCors(b2: B2, origin: string) {
+  if (corsReady) return;
+  const auth = await fetch('https://api.backblazeb2.com/b2api/v3/b2_authorize_account', {
+    headers: { Authorization: 'Basic ' + btoa(`${b2.accessKey}:${b2.secretKey}`) },
+  });
+  if (!auth.ok) throw new HttpError(502, 'Chiave B2 non valida.');
+  const a = await auth.json();
+  const api = a.apiInfo.storageApi.apiUrl;
+  const h = { Authorization: a.authorizationToken, 'Content-Type': 'application/json' };
+  const list = await (await fetch(`${api}/b2api/v3/b2_list_buckets`, {
+    method: 'POST', headers: h, body: JSON.stringify({ accountId: a.accountId, bucketName: b2.bucket }),
+  })).json();
+  const bucket = list.buckets && list.buckets[0];
+  if (!bucket) throw new HttpError(502, 'Bucket B2 "' + b2.bucket + '" non trovato.');
+  const wanted = {
+    corsRuleName: 'appuntiSito',
+    allowedOrigins: [origin],
+    allowedOperations: ['s3_put', 's3_get', 's3_head'],
+    allowedHeaders: ['*'],
+    exposeHeaders: ['ETag'],
+    maxAgeSeconds: 3600,
+  };
+  const current = (bucket.corsRules || []).find((r: { corsRuleName: string }) => r.corsRuleName === wanted.corsRuleName);
+  if (!current || JSON.stringify(current.allowedOrigins) !== JSON.stringify(wanted.allowedOrigins)) {
+    const others = (bucket.corsRules || []).filter((r: { corsRuleName: string }) => r.corsRuleName !== wanted.corsRuleName);
+    const upd = await fetch(`${api}/b2api/v3/b2_update_bucket`, {
+      method: 'POST', headers: h,
+      body: JSON.stringify({ accountId: a.accountId, bucketId: bucket.bucketId, corsRules: [...others, wanted] }),
+    });
+    if (!upd.ok) {
+      throw new HttpError(502, 'Impossibile configurare B2 (CORS). La chiave deve avere accesso a "All buckets" ' +
+        'oppure il permesso writeBuckets.');
+    }
+  }
+  corsReady = true;
+}
+
+// ---- Azioni ----------------------------------------------------------------------------------
+async function handle(req: Request, body: Record<string, unknown>) {
+  const user = await currentUser(req);
+  const b2 = b2Config();
+  const isAdmin = user.role === 'admin';
+
+  switch (body.action) {
+    case 'usage':
+      return { used: await usedBytes(req), quota: b2.quotaBytes, maxFileMb: MAX_FILE_MB };
+
+    case 'upload': {
+      const name = String(body.name || '');
+      const size = Number(body.size);
+      const t = typeFor(name);
+      if (!t) throw new HttpError(400, 'Formato non ammesso: ' + name);
+      if (!(size > 0) || size > MAX_FILE_MB * 1024 * 1024) throw new HttpError(400, 'Il file supera il limite di ' + MAX_FILE_MB + ' MB.');
+      if ((await usedBytes(req)) + size > b2.quotaBytes) {
+        throw new HttpError(507, 'Spazio dell\'archivio esaurito. Contatta un amministratore.');
+      }
+      const origin = env('ALLOWED_ORIGIN') || req.headers.get('Origin') || '';
+      if (origin) await ensureCors(b2, origin);
+      const key = `${user.id}/${crypto.randomUUID()}.${t.ext}`;
+      return { key, url: await sign(b2, 'PUT', key, 900), contentType: t.mime };
+    }
+
+    case 'confirm': {
+      // Dopo il caricamento: controlla il file realmente presente su B2 e lo registra.
+      const key = String(body.key || '');
+      if (!key.startsWith(user.id + '/') || key.includes('..')) throw new HttpError(403, 'Percorso non valido.');
+      const t = typeFor(key);
+      const name = String(body.name || '').slice(0, 255);
+      if (!t || !name || typeFor(name)?.ext !== t.ext) throw new HttpError(400, 'Dati del file non validi.');
+      const head = await fetch(await sign(b2, 'HEAD', key, 300), { method: 'HEAD' });
+      if (!head.ok) throw new HttpError(400, 'Il file non risulta caricato. Riprova.');
+      const size = Number(head.headers.get('content-length')) || 0;
+      if (size > MAX_FILE_MB * 1024 * 1024 || (await usedBytes(req)) + size > b2.quotaBytes) {
+        await b2Delete(b2, key);
+        throw new HttpError(507, 'Spazio dell\'archivio esaurito o file troppo grande.');
+      }
+      const clean = (v: unknown, max: number) => String(v ?? '').trim().slice(0, max);
+      try {
+        const rows = await sbJson(req, '/rest/v1/files?select=id', {
+          method: 'POST',
+          headers: { Prefer: 'return=representation' },
+          body: JSON.stringify({
+            course_id: Number(body.courseId),
+            title: clean(body.title, 200) || name.replace(/\.[^.]+$/, '').slice(0, 200) || name,
+            description: clean(body.description, 2000) || null,
+            original_name: name,
+            storage_path: key,
+            storage: 'b2',
+            mime: t.mime.split(';')[0],
+            kind: t.kind,
+            size,
+          }),
+        });
+        return { id: rows[0].id };
+      } catch (err) {
+        await b2Delete(b2, key);
+        throw err;
+      }
+    }
+
+    case 'url': {
+      // Link temporaneo per vedere o scaricare (solo per chi può leggere il file: RLS).
+      const f = await getFile(req, body.id);
+      if (f.storage !== 'b2') throw new HttpError(400, 'Il file non è su B2.');
+      const t = typeFor(f.storage_path);
+      const name = String(f.original_name);
+      const ascii = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+      const inline = !body.download && ['pdf', 'image', 'audio', 'video'].includes(f.kind);
+      const query: Record<string, string> = {
+        'response-content-disposition': `${inline ? 'inline' : 'attachment'}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`,
+        'response-content-type': t ? t.mime : 'application/octet-stream',
+      };
+      return { url: await sign(b2, 'GET', f.storage_path, URL_TTL, query), expires: URL_TTL };
+    }
+
+    case 'delete': {
+      if (!isAdmin) throw new HttpError(403, 'Solo gli amministratori possono eliminare i file.');
+      const f = await getFile(req, body.id);
+      if (f.storage === 'b2') await b2Delete(b2, f.storage_path);
+      await sbJson(req, `/rest/v1/files?id=eq.${f.id}`, { method: 'DELETE' });
+      return { ok: true };
+    }
+
+    case 'delete-course-files': {
+      if (!isAdmin) throw new HttpError(403, 'Solo gli amministratori possono eliminare i corsi.');
+      const courseId = Number(body.courseId);
+      if (!Number.isInteger(courseId)) throw new HttpError(400, 'Corso non valido.');
+      const rows = await sbJson(req, `/rest/v1/files?select=storage_path&storage=eq.b2&course_id=eq.${courseId}`);
+      for (const r of rows) await b2Delete(b2, r.storage_path);
+      return { deleted: rows.length };
+    }
+
+    default:
+      throw new HttpError(400, 'Azione sconosciuta.');
+  }
+}
+
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
+
+export async function handler(req: Request): Promise<Response> {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
+  const json = (data: unknown, status = 200) =>
+    new Response(JSON.stringify(data), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });
+  if (req.method !== 'POST') return json({ error: 'Metodo non ammesso' }, 405);
+  try {
+    const body = await req.json().catch(() => ({}));
+    return json(await handle(req, body));
+  } catch (err) {
+    const status = err instanceof HttpError ? err.status : 500;
+    if (status === 500) console.error(err);
+    return json({ error: err instanceof Error ? err.message : 'Errore' }, status);
+  }
+}
+
+// deno-lint-ignore no-explicit-any
+const g = globalThis as any;
+if (g.Deno && typeof g.Deno.serve === 'function') g.Deno.serve(handler);

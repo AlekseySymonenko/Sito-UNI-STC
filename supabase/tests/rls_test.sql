@@ -59,6 +59,13 @@ select pg_temp.expect_error($q$select set_role('00000000-0000-0000-0000-00000000
 select pg_temp.expect_error($q$update profiles set role = 'admin'$q$, 'studente non modifica i profili');
 select pg_temp.expect((select count(*) from audit_log) = 0, 'studente non legge il registro');
 select pg_temp.expect((stats() ->> 'files')::int = 1, 'statistiche visibili');
+insert into files (course_id, title, original_name, storage_path, storage, mime, kind, size)
+values ((select id from courses limit 1), 'Audio', 'a.mp3', '00000000-0000-0000-0000-00000000000b/b.mp3', 'b2', 'audio/mpeg', 'audio', 5000);
+select pg_temp.expect(b2_used_bytes() = 5000, 'spazio B2 conteggiato');
+select pg_temp.expect((stats() ->> 'b2_bytes')::int = 5000, 'statistiche B2');
+select pg_temp.expect_error($q$insert into files (course_id, title, original_name, storage_path, storage, mime, kind, size)
+  values ((select id from courses limit 1), 'X', 'x.pdf', '00000000-0000-0000-0000-00000000000b/z.pdf', 'dropbox', 'application/pdf', 'pdf', 1)$q$,
+  'archivio sconosciuto rifiutato');
 
 insert into storage.objects (bucket_id, name) values ('materiali', '00000000-0000-0000-0000-00000000000b/a.pdf');
 select pg_temp.expect_error($q$insert into storage.objects (bucket_id, name) values ('materiali', '00000000-0000-0000-0000-00000000000a/z.pdf')$q$,
@@ -72,6 +79,7 @@ select pg_temp.expect((select count(*) from courses) = 0, 'esterno non vede i co
 select pg_temp.expect((select count(*) from files) = 0, 'esterno non vede i file');
 select pg_temp.expect((select count(*) from storage.objects) = 0, 'esterno non vede l''archivio');
 select pg_temp.expect(stats() is null, 'esterno non vede le statistiche');
+select pg_temp.expect(b2_used_bytes() is null, 'esterno non vede lo spazio B2');
 select pg_temp.expect_error($q$insert into courses (name) values ('Spam')$q$, 'esterno non crea corsi');
 select pg_temp.expect_error($q$insert into storage.objects (bucket_id, name) values ('materiali', '00000000-0000-0000-0000-00000000000c/s.pdf')$q$,
   'esterno non carica file');
@@ -89,7 +97,7 @@ delete from files;
 select pg_temp.expect((select count(*) from files) = 0 and (select count(*) from storage.objects) = 0, 'admin elimina file e archivio');
 delete from courses;
 select pg_temp.expect((select count(*) from courses) = 0, 'admin elimina il corso');
-select pg_temp.expect((select count(*) from audit_log where action in ('file_caricato','file_eliminato','corso_eliminato','ruolo_admin_assegnato')) = 4, 'registro attività completo');
+select pg_temp.expect((select count(*) from audit_log where action in ('file_caricato','file_eliminato','corso_eliminato','ruolo_admin_assegnato')) = 6, 'registro attività completo');
 reset role;
 
 

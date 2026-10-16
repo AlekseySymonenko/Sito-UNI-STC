@@ -80,7 +80,43 @@
     });
     var BUCKET = 'materiali';
     var FILE_SELECT = '*, course:courses(id, name, color), uploader:profiles(name)';
+    var USE_B2 = CFG.storage === 'b2';
     var me = null;
+    var urlCache = {};
+
+    // Chiamata alla funzione "b2" su Supabase (archivio Backblaze B2)
+    async function b2(body) {
+      var session = (await sb.auth.getSession()).data.session;
+      if (!session) throw new Error('Sessione scaduta: accedi di nuovo.');
+      var res;
+      try {
+        res = await fetch(CFG.supabaseUrl + '/functions/v1/b2', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + session.access_token, apikey: CFG.supabaseAnonKey },
+          body: JSON.stringify(body),
+        });
+      } catch (e) { throw new Error('Connessione assente o instabile. Riprova.'); }
+      var data = await res.json().catch(function () { return {}; });
+      if (res.status === 404) throw new Error('Archivio B2 non ancora installato (funzione "b2" mancante su Supabase).');
+      if (!res.ok) throw new Error(data.error || 'Errore dell\'archivio (' + res.status + ').');
+      return data;
+    }
+
+    // Caricamento diretto su B2 con barra di avanzamento
+    function putWithProgress(url, file, contentType, onProgress) {
+      return new Promise(function (resolve, reject) {
+        var xhr = new XMLHttpRequest();
+        xhr.open('PUT', url);
+        xhr.setRequestHeader('Content-Type', contentType);
+        xhr.upload.onprogress = function (e) { if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total); };
+        xhr.onload = function () {
+          if (xhr.status >= 200 && xhr.status < 300) resolve();
+          else reject(new Error('Caricamento non riuscito (errore ' + xhr.status + ').'));
+        };
+        xhr.onerror = function () { reject(new Error('Caricamento interrotto: controlla la connessione e riprova.')); };
+        xhr.send(file);
+      });
+    }
 
     function check(res) {
       if (res.error) throw new Error(friendlyError(res.error));
@@ -155,7 +191,9 @@
       },
 
       async deleteCourse(id) {
-        var files = check(await sb.from('files').select('storage_path').eq('course_id', id));
+        var files = check(await sb.from('files').select('storage_path, storage').eq('course_id', id));
+        if (files.some(function (f) { return f.storage === 'b2'; })) await b2({ action: 'delete-course-files', courseId: id });
+        files = files.filter(function (f) { return f.storage !== 'b2'; });
         for (var i = 0; i < files.length; i += 100) {
           check(await sb.storage.from(BUCKET).remove(files.slice(i, i + 100).map(function (f) { return f.storage_path; })));
         }
@@ -179,10 +217,18 @@
         return check(await sb.from('files').select(FILE_SELECT).eq('id', id).maybeSingle());
       },
 
-      async uploadFile(courseId, file, meta) {
+      async uploadFile(courseId, file, meta, onProgress) {
         var t = typeFor(file.name);
         if (!t) throw new Error('Formato non ammesso: ' + file.name);
         if (file.size > CFG.maxUploadMb * 1024 * 1024) throw new Error('«' + file.name + '» supera il limite di ' + CFG.maxUploadMb + ' MB.');
+        if (USE_B2) {
+          var up = await b2({ action: 'upload', name: file.name, size: file.size });
+          await putWithProgress(up.url, file, up.contentType, onProgress);
+          return (await b2({
+            action: 'confirm', key: up.key, name: file.name, courseId: courseId,
+            title: clean(meta.title, 200), description: clean(meta.description, 2000),
+          })).id;
+        }
         var path = me.id + '/' + uuid() + '.' + t.ext;
         check(await sb.storage.from(BUCKET).upload(path, file, { contentType: t.mime, upsert: false, cacheControl: '3600' }));
         return check(await sb.from('files').insert({
@@ -198,11 +244,20 @@
       },
 
       async fileUrl(file, download) {
+        if (file.storage === 'b2') {
+          var ck = file.id + (download ? ':d' : ':v');
+          var hit = urlCache[ck];
+          if (hit && hit.until > Date.now()) return hit.url;
+          var r = await b2({ action: 'url', id: file.id, download: Boolean(download) });
+          urlCache[ck] = { url: r.url, until: Date.now() + (r.expires - 300) * 1000 };
+          return r.url;
+        }
         var res = await sb.storage.from(BUCKET).createSignedUrl(file.storage_path, 3600, download ? { download: file.original_name } : undefined);
         return check(res).signedUrl;
       },
 
       async deleteFile(file) {
+        if (file.storage === 'b2') { await b2({ action: 'delete', id: file.id }); return; }
         check(await sb.storage.from(BUCKET).remove([file.storage_path]));
         var rows = check(await sb.from('files').delete().eq('id', file.id).select('id'));
         if (!rows.length) throw new Error('Non hai i permessi per questa operazione.');
@@ -218,6 +273,16 @@
       },
 
       async setRole(userId, role) { check(await sb.rpc('set_role', { target: userId, new_role: role })); },
+
+      // Spazio usato rispetto al limite dell'archivio in uso
+      async usage() {
+        if (USE_B2) {
+          var u = await b2({ action: 'usage' });
+          return { used: u.used, quota: u.quota, where: 'Backblaze B2' };
+        }
+        var st = await this.stats();
+        return { used: st.bytes - (st.b2_bytes || 0), quota: 1024 * 1024 * 1024, where: 'Supabase' };
+      },
 
       async listAudit() {
         return check(await sb.from('audit_log').select('*, user:profiles(name)').order('id', { ascending: false }).limit(40));
@@ -370,16 +435,20 @@
         }).sort(function (a, b) { return b.created_at.localeCompare(a.created_at); }).slice(0, opts.limit || 300).map(withRefs);
       },
       async getFile(id) { var f = files.find(function (x) { return x.id === id; }); return f ? withRefs(f) : null; },
-      async uploadFile(courseId, file, meta) {
+      async uploadFile(courseId, file, meta, onProgress) {
         var t = typeFor(file.name);
         if (!t) throw new Error('Formato non ammesso: ' + file.name);
         if (file.size > CFG.maxUploadMb * 1024 * 1024) throw new Error('«' + file.name + '» supera il limite di ' + CFG.maxUploadMb + ' MB.');
+        if (onProgress) onProgress(0.5);
         await wait();
         var id = addFile(courseId, file.name, file, clean(meta.title, 200), me.id, 0, clean(meta.description, 2000));
         log('file_caricato', file.name);
         return id;
       },
       async fileUrl(file) { return URL.createObjectURL(blobs[file.id]); },
+      async usage() {
+        return { used: files.reduce(function (a, f) { return a + f.size; }, 0), quota: 10 * 1024 * 1024 * 1024, where: 'anteprima' };
+      },
       async deleteFile(file) {
         requireAdmin();
         files = files.filter(function (f) { return f.id !== file.id; });

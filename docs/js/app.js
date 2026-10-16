@@ -118,6 +118,7 @@
     document.title = (title ? title + ' · ' : '') + CFG.platformName;
     root.innerHTML = shell(active, body);
     document.body.classList.remove('sidebar-open');
+    root.querySelectorAll('[data-width]').forEach(function (el) { el.style.width = el.getAttribute('data-width') + '%'; });
     window.scrollTo(0, 0);
   }
 
@@ -412,8 +413,8 @@
   async function adminPage(params) {
     if (!isAdmin()) return errorPage('Accesso negato', 'Questa sezione è riservata agli amministratori.');
     loading('admin');
-    var res = await Promise.all([Api.stats(), Api.listUsers(), Api.listAudit()]);
-    var stats = res[0], audit = res[2];
+    var res = await Promise.all([Api.stats(), Api.listUsers(), Api.listAudit(), Api.usage().catch(function () { return null; })]);
+    var stats = res[0], audit = res[2], usage = res[3];
     var q = (params.get('q') || '').toLowerCase();
     var users = res[1].filter(function (u) { return !q || (u.name + ' ' + u.email).toLowerCase().indexOf(q) >= 0; })
       .sort(function (a, b) { return (a.role === 'admin' ? 0 : 1) - (b.role === 'admin' ? 0 : 1) || a.name.localeCompare(b.name); });
@@ -422,6 +423,7 @@
         '<p class="muted">Gli amministratori possono modificare i corsi ed eliminare corsi e materiali.</p></div></div>' +
       '<section class="stats">' + stat('users', stats.users, 'Utenti') + stat('book', stats.courses, 'Corsi') +
         stat('folder', stats.files, 'Materiali') + stat('archive', bytes(stats.bytes), 'Spazio usato') + '</section>' +
+      (usage ? usagePanel(usage) : '') +
       '<section class="panel"><div class="panel-head wrap"><h2>Utenti e ruoli</h2>' +
         '<form class="inline-search" data-form="filter-users">' + icon('search') + '<input type="search" name="q" value="' + esc(params.get('q') || '') + '" placeholder="Cerca per nome o email"></form></div>' +
         '<p class="muted small">Gli studenti compaiono qui dopo il loro primo accesso.</p>' +
@@ -445,6 +447,16 @@
             '<time class="muted small">' + dateTime(a.created_at) + '</time></li>';
         }).join('') : '<li class="muted">Nessuna attività registrata.</li>') +
       '</ul></section>', 'Amministrazione');
+  }
+
+  function usagePanel(u) {
+    var pct = u.quota ? Math.min(100, Math.round((u.used / u.quota) * 100)) : 0;
+    var level = pct >= 90 ? 'high' : pct >= 70 ? 'mid' : 'low';
+    return '<section class="panel usage"><div class="panel-head"><h2>Spazio dell\'archivio</h2>' +
+      '<span class="muted small">' + esc(u.where) + '</span></div>' +
+      '<div class="usage-bar usage-' + level + '"><div data-width="' + pct + '"></div></div>' +
+      '<p class="small"><strong>' + bytes(u.used) + '</strong> usati di ' + bytes(u.quota) + ' (' + pct + '%). ' +
+      (pct >= 90 ? 'Lo spazio sta per finire: elimina i file non più necessari.' : 'Quando lo spazio finisce, i caricamenti vengono bloccati: nessun costo.') + '</p></section>';
   }
 
   function errorPage(title, message) {
@@ -588,9 +600,13 @@
     var done = 0;
     try {
       for (var i = 0; i < files.length; i++) {
-        label.textContent = 'Caricamento ' + (i + 1) + ' di ' + files.length + '…';
-        bar.style.width = Math.round((i / files.length) * 100 + 100 / files.length / 3) + '%';
-        await Api.uploadFile(courseId, files[i], { title: title, description: description });
+        var prefix = files.length > 1 ? 'File ' + (i + 1) + ' di ' + files.length + ' · ' : '';
+        label.textContent = prefix + '0%';
+        bar.style.width = Math.round((i / files.length) * 100) + '%';
+        await Api.uploadFile(courseId, files[i], { title: title, description: description }, function (p) {
+          bar.style.width = Math.round(((i + p) / files.length) * 100) + '%';
+          label.textContent = prefix + (p < 1 ? Math.round(p * 100) + '%' : 'Salvataggio…');
+        });
         done++;
         bar.style.width = Math.round((done / files.length) * 100) + '%';
       }

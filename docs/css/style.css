@@ -469,3 +469,7 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: color-m
 .legal li { margin: .3rem 0; }
 .footer a { color: inherit; text-decoration: underline; }
 .hero-foot a { color: inherit; text-decoration: underline; }
+.usage-bar { height: 12px; border-radius: 99px; background: var(--line-2); overflow: hidden; margin: 4px 0 10px; }
+.usage-bar > div { height: 100%; width: 0; border-radius: 99px; background: var(--ok); transition: width .4s; }
+.usage-mid > div { background: var(--accent); }
+.usage-high > div { background: var(--err); }

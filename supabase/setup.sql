@@ -52,6 +52,13 @@ create table if not exists public.files (
 create index if not exists files_course_idx on public.files(course_id);
 create index if not exists files_uploader_idx on public.files(uploaded_by);
 
+-- Dove si trova il file: archivio Supabase oppure Backblaze B2 (aggiunto in seguito)
+alter table public.files add column if not exists storage text not null default 'supabase';
+do $$ begin
+  alter table public.files add constraint files_storage_check check (storage in ('supabase', 'b2'));
+exception when duplicate_object then null;
+end $$;
+
 create table if not exists public.audit_log (
   id         bigint generated always as identity primary key,
   user_id    uuid references public.profiles(id) on delete set null,
@@ -185,8 +192,15 @@ returns json language sql stable security definer set search_path = public as $$
     'courses', (select count(*) from courses),
     'files',   (select count(*) from files),
     'users',   (select count(*) from profiles),
-    'bytes',   (select coalesce(sum(size), 0) from files)
+    'bytes',   (select coalesce(sum(size), 0) from files),
+    'b2_bytes', (select coalesce(sum(size), 0) from files where storage = 'b2')
   ) end
+$$;
+
+-- Spazio usato su Backblaze B2 (per non superare il limite gratuito)
+create or replace function public.b2_used_bytes()
+returns bigint language sql stable security definer set search_path = public as $$
+  select case when public.is_campus() then (select coalesce(sum(size), 0) from files where storage = 'b2') end
 $$;
 
 -- Permessi (Row Level Security) ----------------------------------------------------
