@@ -90,7 +90,7 @@
       if (!session) throw new Error('Sessione scaduta: accedi di nuovo.');
       var res;
       try {
-        res = await fetch(CFG.supabaseUrl + '/functions/v1/b2', {
+        res = await fetch(CFG.supabaseUrl + '/functions/v1/' + encodeURIComponent(CFG.b2FunctionName || 'b2'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + session.access_token, apikey: CFG.supabaseAnonKey },
           body: JSON.stringify(body),
@@ -100,7 +100,7 @@
           : 'Impossibile contattare l\'archivio (funzione "b2" su Supabase non raggiungibile: controlla che esista con questo nome e che "Verify JWT" sia disattivato).');
       }
       var data = await res.json().catch(function () { return {}; });
-      if (res.status === 404) throw new Error('Archivio B2 non ancora installato (funzione "b2" mancante su Supabase).');
+      if (res.status === 404) throw new Error('Archivio B2 non ancora installato (funzione "' + (CFG.b2FunctionName || 'b2') + '" mancante su Supabase).');
       if (!res.ok) throw new Error(data.error || 'Errore dell\'archivio (' + res.status + ').');
       return data;
     }

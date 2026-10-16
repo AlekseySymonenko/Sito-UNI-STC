@@ -27,6 +27,8 @@ window.APP_CONFIG = {
   //   'supabase' → archivio di Supabase (1 GB totale, max 50 MB per file)
   //   'b2'       → Backblaze B2 (richiede la funzione "b2" su Supabase; max 500 MB per file)
   storage: 'b2',
+  // Nome della Edge Function su Supabase (maiuscole e minuscole contano)
+  b2FunctionName: 'B2',
 
   // Limite per singolo file in MB (50 con 'supabase', fino a 500 con 'b2')
   maxUploadMb: 500,
