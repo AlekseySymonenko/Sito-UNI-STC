@@ -231,7 +231,11 @@ a.user-link:hover strong, .podium-name:hover strong { color: var(--primary); tex
 .cover-6 { background: linear-gradient(135deg, #7c2d58, #ab4f83); }
 .cover-7 { background: linear-gradient(135deg, #3d4a5c, #607089); }
 
-.course-hero { position: relative; overflow: hidden; border-radius: 18px; color: #fff; padding: 30px 32px; display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; margin-bottom: 24px; }
+.course-hero { position: relative; overflow: hidden; border-radius: 18px; color: #fff; padding: 30px 32px; display: flex; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
+/* il titolo va a capo nel suo spazio: numero di materiali e pulsanti restano a destra */
+.course-hero-body { flex: 1 1 auto; min-width: 0; }
+.course-hero-body h1 { overflow-wrap: break-word; }
+.course-hero-side { flex: none; }
 .course-hero::before { content: ''; position: absolute; inset: 0; background-image: repeating-linear-gradient(135deg, rgba(255, 255, 255, .06) 0 2px, transparent 2px 16px); }
 .course-hero > * { position: relative; }
 .course-hero h1 { margin: 10px 0 6px; font-size: clamp(1.7rem, 3vw, 2.4rem); }
@@ -440,6 +444,7 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: color-m
   .hero-copy { padding: 28px 0 10px; }
   .hero-features, .hero-foot { display: none; }
   .welcome, .course-hero { padding: 24px 20px; }
+  .course-hero { flex-wrap: wrap; }
   .course-hero-side { align-items: flex-start; flex-direction: row; width: 100%; }
   .hero-count { text-align: left; }
   .audit li { grid-template-columns: 1fr; gap: 4px; }
