@@ -17,6 +17,7 @@ function call(req) {
   return r;
 }
 let clock = 0; const RealDate = Date;
+let kills = 0; class KillSignal { }
 class FakeDate extends RealDate { static now() { return clock; } }
 
 // --- Drive simulato ---------------------------------------------------------------
@@ -58,7 +59,12 @@ const ctx = { Date: FakeDate, Math, JSON, String, Number, Object, Error, RegExp,
   Utilities: { sleep() {} },
   PropertiesService: { getScriptProperties: () => ({ deleteAllProperties: () => { props = {}; }, setProperties: (o) => Object.assign(props, o), setProperty: (k, v) => { props[k] = String(v); }, getProperty: (k) => (k in props ? props[k] : null), deleteProperty: (k) => { delete props[k]; } }) },
   DriveApp: { getFolderById: (id) => folderObj(byId[id]), getFileById: (id) => fileObj(files[id]), continueFileIterator: (tok) => { const [fid, i] = tok.split(':'); return iter(byId[fid].files, fileObj, +i, fid); } },
-  SpreadsheetApp: { create: () => ss, openById: () => ss },
+  SpreadsheetApp: { create: () => ss, openById: () => ss, flush: () => {
+    // simula Google che interrompe lo script mentre lavora su cap1.pdf (le prime 2 volte)
+    const r = (sheets.Importazione || { rows: [] }).rows.find((x) => x[1] === 'cap1.pdf');
+    if (r && /^in corso \(tentativo [12]\)$/.test(r[6])) { kills++; throw new KillSignal(); }
+  } },
+  LockService: { getScriptLock: () => ({ tryLock: () => true }) },
   ScriptApp: { getOAuthToken: () => 'tok123', getProjectTriggers: () => triggers, deleteTrigger: (t) => { triggers = triggers.filter((x) => x !== t); },
     newTrigger: (h) => ({ timeBased: () => ({ after: (ms) => ({ create: () => triggers.push({ getHandlerFunction: () => h, ms }) }) }) }) },
   UrlFetchApp: { fetch: (url, o = {}) => {
@@ -75,12 +81,13 @@ let src = fs.readFileSync(GS, 'utf8')
   .replace("'INCOLLA_QUI_IL_LINK_DELLA_CARTELLA'", `'https://drive.google.com/drive/u/1/folders/${tree.id}'`)
   .replace("'INCOLLA_QUI_IL_CODICE_DI_SERVIZIO'", `'${TOKEN}'`);
 vm.runInContext(src, ctx);
-ctx.avvia();
+const run = (fn) => { try { fn(); } catch (e) { if (!(e instanceof KillSignal)) throw e; } };
+run(() => ctx.avvia());
 let runs = 1, waits = 0;
 while (triggers.length && runs < 200) {
   const t = triggers[0];
   if (t.ms >= 15 * 60 * 1000) { waits++; call({ cmd: 'robot' }); } // archivio pieno: il robot comprime nel frattempo
-  clock = 0; runs++; ctx.continua();
+  clock = 0; runs++; run(() => ctx.continua());
 }
 const st = JSON.parse(Buffer.from(call({ cmd: 'state' }).body, 'base64'));
 const stato = Object.fromEntries(sheets.Importazione.rows.slice(1).map((r) => [r[1], r[6]]));
@@ -98,6 +105,9 @@ assert.ok(!('x' in stato), '__MACOSX ignorata');
 assert.match(stato['Lez 13 - 9'], /^importato \(Cloudflare, 3 parti\)/);
 assert.match(stato['Videolezioni Chemiometria.zip'], /^importato \(Cloudflare, 4 parti\)/);
 assert.ok(waits >= 1, 'pausa mentre il robot comprime');
+assert.strictEqual(kills, 2, 'interrotto due volte da Google');
+assert.ok(/^importato/.test(stato['cap1.pdf']), 'dopo le interruzioni riparte da solo e importa il file');
+assert.strictEqual(triggers.length, 0, 'a lavoro finito nessuna ripartenza rimasta');
 assert.deepStrictEqual([row('a.pdf').course, row('a.pdf').degree, row('a.pdf').study_year, row('a.pdf').aa, row('a.pdf').store], ['Chimica Generale e Laboratorio', 'triennale', 1, '2025/2026', 'b2']);
 assert.strictEqual(row('cap1.pdf').description, 'Dal vecchio Drive dei rappresentanti · Cartella: Appunti Chimica Generale');
 assert.strictEqual(row('Domande.pdf').kind, 'pdf', 'documento Google esportato in PDF');
@@ -112,7 +122,7 @@ assert.strictEqual(st.uploads, 0, 'nessun caricamento a parti lasciato a metà')
 assert.strictEqual(st.db.length, 5);
 // rieseguire da capo non crea doppioni
 delete sheets.Importazione; sheet('Sheet1');
-ctx.avvia(); while (triggers.length) { clock = 0; ctx.continua(); }
+run(() => ctx.avvia()); while (triggers.length) { clock = 0; run(() => ctx.continua()); }
 const st2 = JSON.parse(Buffer.from(call({ cmd: 'state' }).body, 'base64'));
 assert.strictEqual(st2.db.length, 5, 'seconda esecuzione: nessun doppione');
 assert.ok(sheets.Importazione.rows.slice(1).filter((r) => r[6] === 'già importato').length === 5);

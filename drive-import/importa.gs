@@ -100,11 +100,17 @@ function riprova_errori() {
 }
 
 function continua() {
+  // un solo blocco alla volta (se una ripartenza arriva mentre un altro blocco lavora, esce subito)
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(1000)) return;
   const props = PropertiesService.getScriptProperties();
   const start = Date.now();
   const ss = SpreadsheetApp.openById(props.getProperty('foglio'));
   const sh = ss.getSheetByName('Importazione');
-  fermaRipartenze_();
+  if (props.getProperty('fase') === 'finito') return fermaRipartenze_();
+  // rete di sicurezza: se Google interrompe questo blocco, si riparte comunque tra 10 minuti
+  ripartiTra_(10);
+  Logger.log(props.getProperty('fase') === 'importa' ? 'Riprendo dalla riga ' + (props.getProperty('riga') || 2) : 'Elenco dei file…');
   if (props.getProperty('fase') === 'elenco') {
     if (!elenca_(props, sh, start)) return ripartiTra_(1);
     props.setProperties({ fase: 'importa', riga: '2' });
@@ -117,6 +123,7 @@ function continua() {
       return ripartiTra_(ATTESA_PIENO_MIN);
     }
     props.setProperty('fase', 'finito');
+    fermaRipartenze_();
     riepilogo_(sh);
     Logger.log('FINITO: ' + ss.getUrl());
   }
@@ -192,22 +199,44 @@ function importa_(props, sh, start) {
   for (; riga <= last; riga++) {
     if (Date.now() - start > MAX_MS) { props.setProperty('riga', String(riga)); return 'tempo'; }
     const r = sh.getRange(riga, 1, 1, COL.ordine).getValues()[0];
-    if (r[COL.stato - 1]) continue;
+    const prima = String(r[COL.stato - 1]);
+    if (prima && prima.indexOf('in corso') !== 0) continue;
+    // "in corso" più volte sullo stesso file = si blocca sempre lì: lo segno come errore e vado avanti
+    const tentativi = (prima.match(/tentativo (\d+)/) || [0, 0])[1] * 1 + 1;
+    if (tentativi > 3) {
+      annullaCorrente_(props);
+      sh.getRange(riga, COL.stato).setValue('errore: bloccato più volte su questo file');
+      props.setProperty('riga', String(riga + 1));
+      continue;
+    }
+    passo_(sh, riga, 'in corso (tentativo ' + tentativi + ')');
+    Logger.log('→ riga ' + riga + ': ' + r[COL.name - 1] + ' (' + r[COL.mb - 1] + ' MB)');
     let stato;
     try {
-      stato = importaFile_(props, r, start);
+      stato = importaFile_(props, r, start, function (p) { passo_(sh, riga, 'in corso (tentativo ' + tentativi + '): ' + p); });
     } catch (err) {
       annullaCorrente_(props);
       stato = 'errore: ' + String(err && err.message || err).slice(0, 200);
     }
-    if (stato === 'tempo' || stato === 'pieno') { props.setProperty('riga', String(riga)); return stato; }
+    Logger.log('   ' + stato);
+    if (stato === 'tempo' || stato === 'pieno') {
+      passo_(sh, riga, prima && stato === 'pieno' ? prima : '');  // riprende da qui al prossimo blocco
+      props.setProperty('riga', String(riga));
+      return stato;
+    }
     sh.getRange(riga, COL.stato).setValue(stato);
     props.setProperty('riga', String(riga + 1));
   }
   return 'fatto';
 }
 
-function importaFile_(props, r, start) {
+// Scrive nel foglio cosa sta facendo lo script (visibile subito)
+function passo_(sh, riga, testo) {
+  sh.getRange(riga, COL.stato).setValue(testo);
+  SpreadsheetApp.flush();
+}
+
+function importaFile_(props, r, start, step) {
   const id = String(r[COL.id - 1]);
   const mime = String(r[COL.mime - 1]);
   const parts = String(r[COL.path - 1]).split(' / ');
@@ -231,20 +260,26 @@ function importaFile_(props, r, start) {
   let bytes = null;
   if (!cur) {
     let size = Math.round(Number(r[COL.mb - 1]) * 1048576);
+    step('verifica');
     if (exp) {
+      step('conversione del documento Google');
       bytes = scarica_('https://www.googleapis.com/drive/v3/files/' + id + '/export?mimeType=' + encodeURIComponent(exp[0]));
       size = bytes.length;
     } else {
       size = DriveApp.getFileById(id).getSize();
     }
+    step('richiesta al sito');
     const b = chiama_(Object.assign({ action: 'import-begin', size: size }, meta));
     if (b.status === 'exists') return 'già importato';
     if (b.status === 'unsupported') return 'saltato: formato non ammesso';
     if (b.status === 'too_big') return 'saltato: troppo grande';
     if (b.status === 'full') return 'pieno';
     if (b.url) {
+      step('lettura da Drive');
       if (!bytes) bytes = scarica_('https://www.googleapis.com/drive/v3/files/' + id + '?alt=media&supportsAllDrives=true');
+      step('invio all\'archivio');
       carica_(b.url, bytes);
+      step('registrazione nel sito');
       const done = chiama_(Object.assign({ action: 'import-finish', store: b.store, key: b.key }, meta));
       return 'importato (' + (done.store === 'r2' ? 'Cloudflare' : 'Backblaze') + ')';
     }
@@ -258,8 +293,10 @@ function importaFile_(props, r, start) {
     if (Date.now() - start > MAX_MS) return 'tempo';
     const from = (n - 1) * cur.partSize;
     const to = Math.min(cur.size, from + cur.partSize) - 1;
+    step('parte ' + n + ' di ' + total + ': lettura da Drive');
     const chunk = scarica_('https://www.googleapis.com/drive/v3/files/' + id + '?alt=media&supportsAllDrives=true', from, to);
     const p = chiama_({ action: 'import-part', token: CODICE, store: cur.store, key: cur.key, uploadId: cur.uploadId, part: n });
+    step('parte ' + n + ' di ' + total + ': invio all\'archivio');
     const etag = carica_(p.url, chunk);
     cur.parts.push({ n: n, etag: etag });
     props.setProperty('corrente', JSON.stringify(cur));
@@ -273,15 +310,15 @@ function importaFile_(props, r, start) {
 // Ripete una richiesta fino a 3 volte se la connessione cade o il server risponde con un errore temporaneo
 function fetchRiprova_(url, opts) {
   let last;
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 2; i++) {
     try {
       const res = UrlFetchApp.fetch(url, opts);
       if (res.getResponseCode() < 500) return res;
       last = res;
     } catch (e) {
-      if (i === 2) throw e;
+      if (i === 1) throw e;
     }
-    Utilities.sleep(2000 * (i + 1));
+    Utilities.sleep(3000);
   }
   return last;
 }
