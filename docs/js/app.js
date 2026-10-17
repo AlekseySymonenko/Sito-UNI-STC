@@ -4,7 +4,7 @@
 
   // Versione del sito: deve coincidere con data-v in index.html. Se Safari ha in
   // memoria una pagina principale vecchia, la ricarichiamo (una volta) aggirando la cache.
-  var VERSION = '20261018g';
+  var VERSION = '20261018h';
   if (document.documentElement.getAttribute('data-v') !== VERSION) {
     var tried = false;
     try { tried = sessionStorage.getItem('reload-v') === VERSION; sessionStorage.setItem('reload-v', VERSION); } catch (e) { /* ignora */ }
@@ -250,6 +250,8 @@
     return '<div class="course-item">' + courseCard(c) + (isAdmin() ? courseMenu(c) : '') + '</div>';
   }
 
+  var YEAR_PREVIEW = 6; // corsi visibili per anno di corso prima di "Mostra altri"
+
   function courseCard(c) {
     return '<a class="course-card" href="#/corso/' + c.id + '">' +
       '<div class="course-cover cover-' + (c.color % 8) + '"><span class="course-code">' + esc(c.code || 'CORSO') + '</span>' +
@@ -438,11 +440,17 @@
           (onlyYear ? '<a href="#/corsi?laurea=' + deg.key + aaQuery('&') + '">' + deg.label + '</a><span>›</span><strong>' + onlyYear + '° anno</strong>'
             : '<strong>' + deg.label + '</strong>') + '</nav>';
         body = seg + crumbs + deg.years.filter(function (y) { return !onlyYear || y === onlyYear; }).map(function (y) {
-          var list = all.filter(function (c) { return c.degree === deg.key && Number(c.study_year) === y; });
+          // prima i corsi con più materiali; con tutti gli anni visibili, solo i primi 6 e gli altri a tendina
+          var list = all.filter(function (c) { return c.degree === deg.key && Number(c.study_year) === y; })
+            .sort(function (a, b) { return (b.file_count || 0) - (a.file_count || 0) || a.name.localeCompare(b.name); });
+          var shown = onlyYear ? list : list.slice(0, YEAR_PREVIEW), rest = onlyYear ? [] : list.slice(YEAR_PREVIEW);
           return '<section class="year-section"><div class="year-head"><h2><span class="year-badge">' + y + '°</span> anno</h2>' +
             '<span class="muted small">' + list.length + ' cors' + (list.length === 1 ? 'o' : 'i') + '</span>' +
             '<a class="btn btn-ghost btn-sm year-add" href="#/nuovo-corso?posto=' + deg.key + ':' + y + aaNewQuery('&') + '">' + icon('plus') + 'Aggiungi</a></div>' +
-            (list.length ? '<div class="course-grid">' + list.map(courseItem).join('') + '</div>'
+            (list.length ? '<div class="course-grid">' + shown.map(courseItem).join('') + '</div>' +
+              (rest.length ? '<details class="year-more"><summary>' + icon('chevron') +
+                '<span class="when-closed">Mostra altri ' + rest.length + ' cors' + (rest.length === 1 ? 'o' : 'i') + '</span><span class="when-open">Mostra meno</span></summary>' +
+                '<div class="course-grid">' + rest.map(courseItem).join('') + '</div></details>' : '')
               : '<p class="year-empty muted small">Nessun corso in questo anno.</p>') + '</section>';
         }).join('');
       }

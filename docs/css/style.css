@@ -588,6 +588,15 @@ tr.is-banned td { background: #fdf6f5; }
 .year-badge { display: inline-grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: var(--primary-soft); color: var(--primary); font-family: var(--serif); font-size: 1.1rem; }
 .year-add { margin-left: auto; }
 .year-empty { padding: 14px 16px; border: 1px dashed var(--line); border-radius: 12px; margin: 0; }
+.year-more { margin-top: 14px; }
+.year-more > summary { list-style: none; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; font-size: .9rem; color: var(--primary); padding: 8px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.year-more > summary::-webkit-details-marker { display: none; }
+.year-more > summary:hover { border-color: var(--primary); background: var(--primary-soft); }
+.year-more > summary svg { width: 16px; height: 16px; transform: rotate(90deg); transition: transform .2s; }
+.year-more[open] > summary svg { transform: rotate(-90deg); }
+.year-more .when-open, .year-more[open] .when-closed { display: none; }
+.year-more[open] .when-open { display: inline; }
+.year-more > .course-grid { margin-top: 14px; }
 .course-item { display: flex; flex-direction: column; gap: 8px; }
 .course-item .course-card { flex: 1; }
 .move-select { display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--muted); }
