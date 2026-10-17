@@ -70,10 +70,12 @@ const ctx = { Date: FakeDate, Math, JSON, String, Number, Object, Error, RegExp,
   UrlFetchApp: { fetch: (url, o = {}) => {
     clock += 25000; // ogni richiesta "costa" 25 s: forza pause a metà file
     const headers = Object.assign({}, o.headers || {}); if (o.contentType) headers['Content-Type'] = o.contentType;
-    const body = o.payload === undefined ? '' : Buffer.from(typeof o.payload === 'string' ? o.payload : Buffer.from(o.payload)).toString('base64');
+    if (o.payload && Array.isArray(o.payload)) throw new Error('memoria: lo script deve passare Blob, non array di byte');
+    const body = o.payload === undefined ? '' : (o.payload._buf || Buffer.from(o.payload)).toString('base64');
     const r = call({ url, method: (o.method || 'get').toUpperCase(), headers, body });
     const buf = Buffer.from(r.body, 'base64');
-    return { getResponseCode: () => r.status, getContentText: () => buf.toString(), getContent: () => [...buf].map((b) => (b > 127 ? b - 256 : b)), getAllHeaders: () => r.headers };
+    return { getResponseCode: () => r.status, getContentText: () => buf.toString(), getContent: () => { throw new Error('memoria: getContent non va usato sui file'); },
+      getBlob: () => ({ _buf: buf, getBytes: () => [...buf].map((b) => (b > 127 ? b - 256 : b)) }), getAllHeaders: () => r.headers };
   } },
 };
 vm.createContext(ctx);

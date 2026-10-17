@@ -257,14 +257,14 @@ function importaFile_(props, r, start, step) {
   let cur = JSON.parse(props.getProperty('corrente') || 'null');
   if (cur && cur.id !== id) cur = null;
 
-  let bytes = null;
+  let blob = null;  // il file resta un Blob: niente conversioni che occupano memoria
   if (!cur) {
     let size = Math.round(Number(r[COL.mb - 1]) * 1048576);
     step('verifica');
     if (exp) {
       step('conversione del documento Google');
-      bytes = scarica_('https://www.googleapis.com/drive/v3/files/' + id + '/export?mimeType=' + encodeURIComponent(exp[0]));
-      size = bytes.length;
+      blob = scarica_('https://www.googleapis.com/drive/v3/files/' + id + '/export?mimeType=' + encodeURIComponent(exp[0]));
+      size = blob.getBytes().length;  // documenti convertiti: sempre piccoli
     } else {
       size = DriveApp.getFileById(id).getSize();
     }
@@ -276,9 +276,9 @@ function importaFile_(props, r, start, step) {
     if (b.status === 'full') return 'pieno';
     if (b.url) {
       step('lettura da Drive');
-      if (!bytes) bytes = scarica_('https://www.googleapis.com/drive/v3/files/' + id + '?alt=media&supportsAllDrives=true');
+      if (!blob) blob = scarica_('https://www.googleapis.com/drive/v3/files/' + id + '?alt=media&supportsAllDrives=true');
       step('invio all\'archivio');
-      carica_(b.url, bytes);
+      carica_(b.url, blob);
       step('registrazione nel sito');
       const done = chiama_(Object.assign({ action: 'import-finish', store: b.store, key: b.key }, meta));
       return 'importato (' + (done.store === 'r2' ? 'Cloudflare' : 'Backblaze') + ')';
@@ -348,11 +348,11 @@ function scarica_(url, from, to) {
   const res = fetchRiprova_(url, { headers: headers, muteHttpExceptions: true });
   const code = res.getResponseCode();
   if (code !== 200 && code !== 206) throw new Error('lettura da Drive non riuscita (' + code + ')');
-  return res.getContent();
+  return res.getBlob();
 }
 
-function carica_(url, bytes) {
-  const res = fetchRiprova_(url, { method: 'put', payload: bytes, contentType: 'application/octet-stream', muteHttpExceptions: true });
+function carica_(url, blob) {
+  const res = fetchRiprova_(url, { method: 'put', payload: blob, contentType: 'application/octet-stream', muteHttpExceptions: true });
   if (res.getResponseCode() !== 200) throw new Error('caricamento non riuscito (' + res.getResponseCode() + ')');
   const h = res.getAllHeaders();
   return h.ETag || h.etag || h.Etag || '';
