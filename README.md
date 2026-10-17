@@ -190,7 +190,8 @@ I dati iniziali si caricano una volta con [`supabase/professori.sql`](supabase/p
 Diamante con 4 divisioni ciascuna; sopra i 1000 punti Maestro, Gran Maestro (posizioni 2–5) e
 Sfidante (n° 1). Gli stemmi sono disegni originali.
 - **+10** punti per file caricato (max 10 file al giorno)
-- **+1** quando un altro studente apre un tuo file (max una volta al giorno per persona)
+- **+5** quando un altro studente apre un tuo file (una volta per ogni studente)
+- **+1** per ogni file di altri che apri per la prima volta (max 5 punti al giorno)
 - **−10** se un amministratore elimina un tuo file (la pulizia automatica e l'eliminazione di un corso non tolgono punti)
 
 **Moderazione**

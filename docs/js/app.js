@@ -4,7 +4,7 @@
 
   // Versione del sito: deve coincidere con data-v in index.html. Se Safari ha in
   // memoria una pagina principale vecchia, la ricarichiamo (una volta) aggirando la cache.
-  var VERSION = '20261018i';
+  var VERSION = '20261018j';
   if (document.documentElement.getAttribute('data-v') !== VERSION) {
     var tried = false;
     try { tried = sessionStorage.getItem('reload-v') === VERSION; sessionStorage.setItem('reload-v', VERSION); } catch (e) { /* ignora */ }
@@ -857,7 +857,9 @@
 
     var rules = '<section class="panel rules"><h2>Come si guadagnano i punti</h2><ul>' +
       '<li><strong>+10</strong> per ogni file caricato (fino a 10 file al giorno)</li>' +
-      '<li><strong>+1</strong> ogni volta che un altro studente apre un tuo file (al massimo una volta al giorno per persona)</li>' +
+      '<li><strong>+5</strong> quando un altro studente apre un tuo file (una volta per ogni studente)</li>' +
+      '<li><strong>+1</strong> per ogni file di altri che apri per la prima volta (fino a 5 punti al giorno)</li>' +
+      '<li>Chi aveva caricato file sul vecchio Drive riceve i punti (anche delle aperture) al primo accesso</li>' +
       '<li><strong>−10</strong> se un amministratore elimina un tuo file</li>' +
       '<li>La pulizia automatica dello spazio e l\'eliminazione di un corso non tolgono punti</li></ul></section>';
 

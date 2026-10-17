@@ -98,6 +98,8 @@ create table if not exists public.import_credits (
   points integer not null default 0,   -- punti spettanti per i file importati (con tetto)
   paid   integer not null default 0    -- punti già accreditati a un profilo
 );
+-- punti per le aperture dei file di autori non ancora iscritti (accreditati al primo accesso)
+alter table public.import_credits add column if not exists view_points integer not null default 0;
 
 -- Aperture: ogni studente conta al massimo una volta al giorno per file
 create table if not exists public.file_opens (
@@ -107,6 +109,9 @@ create table if not exists public.file_opens (
   primary key (file_id, user_id, day)
 );
 create index if not exists file_opens_day_idx on public.file_opens(file_id, day);
+-- punti dati a chi ha aperto (1 se era la prima volta per quel file, entro il limite giornaliero)
+alter table public.file_opens add column if not exists reader_points smallint not null default 0;
+create index if not exists file_opens_user_day_idx on public.file_opens(user_id, day);
 
 -- Corsi aperti di recente da ciascuno studente (per la dashboard, uguale su ogni dispositivo)
 create table if not exists public.course_visits (
@@ -131,7 +136,10 @@ insert into public.app_settings (key, value) values
   ('import_grace_days', '183'),        -- i file importati dal Drive sono protetti per 6 mesi
   ('import_points_per_file', '10'),    -- punti per ogni file importato…
   ('import_points_cap', '0'),          -- …fino a un massimo per persona (0 = nessun tetto)
-  ('import_max_mb', '3000')            -- dimensione massima di un file importato (gli ZIP vengono poi scompattati)
+  ('import_max_mb', '3000'),           -- dimensione massima di un file importato (gli ZIP vengono poi scompattati)
+  ('points_per_view', '5'),            -- a chi ha caricato, quando un altro studente apre il file (una volta per persona)
+  ('points_per_read', '1'),            -- a chi apre un file per la prima volta…
+  ('read_points_daily_cap', '5')       -- …fino a questo massimo al giorno
 on conflict (key) do nothing;
 -- Aggiornamento: nessun tetto ai punti dei file importati (prima 300)
 update public.app_settings set value = '0' where key = 'import_points_cap' and value = '300';
@@ -248,9 +256,9 @@ begin
       where id in (select file_id from public.import_pending where email = v_email) and uploaded_by is null;
       update public.profiles p set
         upload_count = p.upload_count + (select count(*) from public.import_pending where email = v_email),
-        points = p.points + coalesce((select c.points - c.paid from public.import_credits c where c.email = v_email), 0)
+        points = p.points + coalesce((select c.points - c.paid + c.view_points from public.import_credits c where c.email = v_email), 0)
       where p.id = new.id;
-      update public.import_credits set paid = points where email = v_email;
+      update public.import_credits set paid = points, view_points = 0 where email = v_email;
       delete from public.import_pending where email = v_email;
     end if;
   end if;
@@ -428,20 +436,47 @@ returns setof bigint language sql stable security definer set search_path = publ
   order by visited_at desc limit 12;
 $$;
 
--- Registra un'apertura (vista o download) di un file
+-- Registra un'apertura (vista o download) di un file.
+-- Aperture: max una al giorno per studente (servono alla pulizia automatica).
+-- Punti, solo la PRIMA volta che uno studente apre quel file (mai per i propri file):
+--   +5 a chi l'ha caricato (o messi da parte, se è un autore del Drive non ancora iscritto)
+--   +1 a chi lo apre, fino a 5 punti al giorno
 create or replace function public.record_file_open(fid bigint)
 returns void language plpgsql security definer set search_path = public as $$
+declare
+  v_uid    uuid := auth.uid();
+  v_owner  uuid;
+  v_first  boolean;
+  v_reader int := 0;
+  v_view   int := public.setting_int('points_per_view', 5);
+  v_email  text;
 begin
-  if not public.is_campus() or not exists (select 1 from files where id = fid) then return; end if;
-  insert into file_opens (file_id, user_id, day) values (fid, auth.uid(), current_date)
+  if not public.is_campus() then return; end if;
+  select uploaded_by into v_owner from files where id = fid;
+  if not found then return; end if;
+  v_first := not exists (select 1 from file_opens where file_id = fid and user_id = v_uid)
+             and v_owner is distinct from v_uid;
+  if v_first and (select coalesce(sum(reader_points), 0) from file_opens where user_id = v_uid and day = current_date)
+                 < public.setting_int('read_points_daily_cap', 5) then
+    v_reader := public.setting_int('points_per_read', 1);
+  end if;
+  insert into file_opens (file_id, user_id, day, reader_points) values (fid, v_uid, current_date, v_reader)
   on conflict do nothing;
   if found then
     update files set open_count = open_count + 1, last_opened_at = now() where id = fid;
-    -- +1 punto a chi ha caricato il file, se lo apre qualcun altro
-    update profiles set points = points + 1
-    where id = (select uploaded_by from files where id = fid) and id <> auth.uid();
   else
     update files set last_opened_at = now() where id = fid;
+  end if;
+  if v_first then
+    if v_reader > 0 then update profiles set points = points + v_reader where id = v_uid; end if;
+    if v_owner is not null then
+      update profiles set points = points + v_view where id = v_owner;
+    else
+      select email into v_email from import_pending where file_id = fid;
+      if v_email is not null then
+        update import_credits set view_points = view_points + v_view where email = v_email;
+      end if;
+    end if;
   end if;
 end $$;
 
@@ -564,6 +599,28 @@ do $$ begin
              + (select count(*) from file_opens o join files f on f.id = o.file_id
                 where f.uploaded_by = p.id and o.user_id <> p.id);
     insert into app_settings (key, value) values ('points_initialized', 'true');
+  end if;
+end $$;
+
+-- Nuove regole dei punti per le aperture (una volta sola): da +1 per apertura giornaliera
+-- a +5 per ogni studente diverso; +1 a chi apre un file per la prima volta (max 5 al giorno)
+do $$ begin
+  if not exists (select 1 from app_settings where key = 'points_v2') then
+    update profiles p set points = greatest(0, p.points
+      - (select count(*) from file_opens o join files f on f.id = o.file_id where f.uploaded_by = p.id and o.user_id <> p.id)
+      + 5 * (select count(distinct (o.file_id, o.user_id)) from file_opens o join files f on f.id = o.file_id
+             where f.uploaded_by = p.id and o.user_id <> p.id));
+    with firsts as (
+      select o.user_id, o.file_id, min(o.day) as d from file_opens o join files f on f.id = o.file_id
+      where f.uploaded_by is distinct from o.user_id group by o.user_id, o.file_id
+    ), perday as (
+      select user_id, least(count(*), 5) as n from firsts group by user_id, d
+    )
+    update profiles p set points = p.points + coalesce((select sum(n) from perday where perday.user_id = p.id), 0);
+    update import_credits c set view_points = view_points + 5 * (
+      select count(distinct (o.file_id, o.user_id)) from file_opens o join import_pending ip on ip.file_id = o.file_id
+      where ip.email = c.email);
+    insert into app_settings (key, value) values ('points_v2', 'true');
   end if;
 end $$;
 

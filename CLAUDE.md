@@ -45,8 +45,9 @@ immagini, audio e video. Fatto da Aleksey Symonenko (rappresentante, utente non 
 ## Funzionalità presenti
 Corsi per laurea (triennale 1–3, magistrale 1–2) e **anno accademico** (menu, normalizzato), menu ⋯
 sulle schede per modificare/spostare (solo admin); upload su B2 fino a 500 MB; anteprime
-PDF/immagini/audio/video; dashboard con i corsi aperti di recente (tabella `course_visits`, uguale su ogni dispositivo; localStorage solo di riserva); ricerca; classifica a leghe (punti: +10 file max 10/giorno, +1 apertura
-altrui, −10 se un admin elimina); segnalazioni, sospensione utenti; file protetti 📌; pulizia
+PDF/immagini/audio/video; dashboard con i corsi aperti di recente (tabella `course_visits`, uguale su ogni dispositivo; localStorage solo di riserva); ricerca; classifica a leghe (punti: +10 file max 10/giorno, +5 a chi carica per ogni studente diverso
+che apre il file, +1 a chi apre un file nuovo max 5/giorno (`file_opens.reader_points`), −10 se un admin elimina;
+per gli autori Drive non iscritti `import_credits.view_points`); segnalazioni, sospensione utenti; file protetti 📌; pulizia
 automatica per archivio (documenti: aperture ultimi 548 giorni; registrazioni: 365; mai file < 14 giorni né
 importati da < 6 mesi); importazione Drive con punti (+10/file, nessun tetto, accreditati anche al primo accesso
 via `import_pending`/`import_credits`); formati extra .cif/.mryx; pagine Rappresentanti e

@@ -170,7 +170,18 @@ select pg_temp.expect((select points from profiles where email = 'n.cognome@camp
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000d","email":"l.gatti@campus.unimib.it"}', false);
 select record_file_open((select id from files where title = 'File 1'));
 select record_file_open((select id from files where title = 'File 1'));
-select pg_temp.expect((select points from profiles where email = 'n.cognome@campus.unimib.it') = 101, '+1 punto se un altro apre il file (una volta al giorno)');
+select pg_temp.expect((select points from profiles where email = 'n.cognome@campus.unimib.it') = 105, '+5 a chi ha caricato quando un altro apre il file');
+select pg_temp.expect((select points from profiles where email = 'l.gatti@campus.unimib.it') = 1, '+1 a chi apre un file per la prima volta');
+reset role;
+update file_opens set day = current_date - 3 where user_id = '00000000-0000-0000-0000-00000000000d';
+set role authenticated;
+select record_file_open((select id from files where title = 'File 1'));   -- un altro giorno: nessun nuovo punto
+select pg_temp.expect((select points from profiles where email = 'n.cognome@campus.unimib.it') = 105
+  and (select points from profiles where email = 'l.gatti@campus.unimib.it') = 1, 'riaprire lo stesso file non dà più punti');
+select pg_temp.expect((select open_count from files where title = 'File 1') = 3, 'ma conta come apertura per la pulizia');
+select record_file_open(id) from files where title in ('File 2', 'File 3', 'File 4', 'File 5', 'File 6', 'File 7', 'File 8');
+select pg_temp.expect((select points from profiles where email = 'l.gatti@campus.unimib.it') = 6, 'chi apre: massimo 5 punti al giorno');
+select pg_temp.expect((select points from profiles where email = 'n.cognome@campus.unimib.it') = 140, 'chi ha caricato: +5 per ogni file aperto, senza limite');
 select pg_temp.expect((select user_id from leaderboard() limit 1) = '00000000-0000-0000-0000-00000000000b', 'classifica ordinata per punti');
 select pg_temp.expect_error('select banned_reason from profiles', 'studenti non vedono i dati di sospensione');
 select pg_temp.expect((select count(*) from profiles) >= 3, 'studenti vedono i profili pubblici');
@@ -184,7 +195,7 @@ select pg_temp.expect_error('select * from admin_users()', 'elenco admin riserva
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000a","email":"admin.uno@campus.unimib.it"}', false);
 select pg_temp.expect((select count(*) from reports) = 1, 'admin leggono le segnalazioni');
 delete from files where title = 'File 3';
-select pg_temp.expect((select points from profiles where email = 'n.cognome@campus.unimib.it') = 91, '-10 se un admin elimina un file');
+select pg_temp.expect((select points from profiles where email = 'n.cognome@campus.unimib.it') = 130, '-10 se un admin elimina un file');
 select pg_temp.expect_error($q$select ban_user('00000000-0000-0000-0000-00000000000a', 'x')$q$, 'non ci si auto-sospende');
 select pg_temp.expect_error($q$select ban_user('00000000-0000-0000-0000-00000000000b', '  ')$q$, 'serve un motivo');
 select ban_user('00000000-0000-0000-0000-00000000000b', 'Materiale pornografico');
@@ -201,7 +212,7 @@ select pg_temp.expect(stats() is null, 'il sospeso non vede le statistiche');
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000a","email":"admin.uno@campus.unimib.it"}', false);
 select unban_user('00000000-0000-0000-0000-00000000000b');
 delete from courses where name = 'Corso classifica';
-select pg_temp.expect((select points from profiles where email = 'n.cognome@campus.unimib.it') = 91, 'eliminare un corso non toglie punti');
+select pg_temp.expect((select points from profiles where email = 'n.cognome@campus.unimib.it') = 130, 'eliminare un corso non toglie punti');
 select pg_temp.expect((select count(*) from reports) = 0, 'segnalazioni rimosse con il file');
 set role authenticated;
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000b","email":"n.cognome@campus.unimib.it"}', false);
@@ -297,6 +308,11 @@ from generate_series(1, 2) i;
 reset role;
 select pg_temp.expect((select count(*) from files where drive_id in ('n1', 'n2') and uploaded_by is null) = 2, 'autore non iscritto: file in attesa');
 select pg_temp.expect((select count(*) from import_pending where email = 'nuovo.studente@campus.unimib.it') = 2, 'email dell''autore conservata a parte');
+set role authenticated;
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000d","email":"l.gatti@campus.unimib.it"}', false);
+select record_file_open((select id from files where drive_id = 'n1'));
+reset role;
+select pg_temp.expect((select view_points from import_credits where email = 'nuovo.studente@campus.unimib.it') = 5, 'aperture dei file di chi non è iscritto: punti messi da parte');
 select pg_temp.expect((select degree is null and study_year is null and year = '2025/2026' from courses c join files f on f.course_id = c.id where f.drive_id = 'n1'), 'anno non valido: corso da assegnare');
 select pg_temp.expect((select count(distinct course_id) from files where drive_id in ('d1', 'n1')) = 2, 'anno accademico diverso: corso separato');
 select pg_temp.expect((select needs_processing and storage = 'r2' from files where drive_id = 'n1'), 'registrazione su Cloudflare da comprimere');
@@ -315,16 +331,17 @@ select pg_temp.expect((select points from import_credits where email = 'nuovo.st
 insert into auth.users values ('00000000-0000-0000-0000-0000000000ee', 'Nuovo.Studente@campus.unimib.it', '{"full_name":"Nuovo Studente"}');
 set role authenticated;
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000b","email":"n.cognome@campus.unimib.it"}', false);
-select pg_temp.expect((select points from leaderboard() where name = 'Nuovo Studente') = 20, 'dopo il login compare in classifica con i punti del Drive');
+select pg_temp.expect((select points from leaderboard() where name = 'Nuovo Studente') = 25, 'dopo il login compare in classifica con i punti del Drive (anche delle aperture)');
 reset role;
-select pg_temp.expect((select points = 20 and upload_count = 2 from profiles where email = 'nuovo.studente@campus.unimib.it'), 'primo accesso: punti del Drive accreditati');
+select pg_temp.expect((select points = 25 and upload_count = 2 from profiles where email = 'nuovo.studente@campus.unimib.it'), 'primo accesso: punti del Drive accreditati');
+select pg_temp.expect((select view_points from import_credits where email = 'nuovo.studente@campus.unimib.it') = 0, 'punti delle aperture accreditati una volta sola');
 select pg_temp.expect((select count(*) from files where uploaded_by = '00000000-0000-0000-0000-0000000000ee') = 2, 'primo accesso: file del Drive attribuiti');
 select pg_temp.expect(not exists (select 1 from import_pending where email = 'nuovo.studente@campus.unimib.it'), 'primo accesso: attesa chiusa');
 set role anon;
 select import_register(current_setting('test.token'), jsonb_build_object('drive_id', 'n3', 'store', 'b2', 'path', 'import/n3.pdf',
   'size', 10, 'name', 'Dopo.pdf', 'kind', 'pdf', 'mime', 'application/pdf', 'owner', 'nuovo.studente@campus.unimib.it', 'course', 'Fotochimica'));
 reset role;
-select pg_temp.expect((select points from profiles where email = 'nuovo.studente@campus.unimib.it') = 30, 'dopo l''iscrizione i punti arrivano subito');
+select pg_temp.expect((select points from profiles where email = 'nuovo.studente@campus.unimib.it') = 35, 'dopo l''iscrizione i punti arrivano subito');
 select pg_temp.expect((select value from app_settings where key = 'import_points_cap') = '0', 'nessun tetto ai punti dei file importati');
 -- Cloudflare pieno: l'importazione aspetta la compressione
 update app_settings set value = '12000' where key = 'r2_quota_bytes';
@@ -348,7 +365,7 @@ select pg_temp.expect(exists (select 1 from storage_eviction_order('b2') where f
 select pg_temp.expect(not exists (select 1 from storage_eviction_order('b2') where file_id = (select id from files where drive_id = 'n1')), 'ogni archivio libera spazio solo tra i suoi file');
 insert into file_opens (file_id, user_id, day) select id, '00000000-0000-0000-0000-00000000000a', current_date - 400 from files where drive_id in ('d1', 'n1');
 select pg_temp.expect((select opens from storage_eviction_order('b2') where file_id = (select id from files where drive_id = 'd1')) = 1, 'documenti: aperture contate per un anno e mezzo');
-select pg_temp.expect((select opens from storage_eviction_order('r2') where file_id = (select id from files where drive_id = 'n1')) = 0, 'registrazioni: aperture contate per un anno');
+select pg_temp.expect((select opens from storage_eviction_order('r2') where file_id = (select id from files where drive_id = 'n1')) = 1, 'registrazioni: aperture contate per un anno (quella di 400 giorni fa no)');
 -- Robot
 set role anon;
 select pg_temp.expect_error($q$select * from robot_pending('sbagliato-sbagliato-sbagliato-sbagliato')$q$, 'robot: codice sbagliato rifiutato');
@@ -387,6 +404,34 @@ select pg_temp.expect_error($q$select * from robot_pending(current_setting('test
 reset role;
 delete from files where imported_at is not null or title = 'Finto';
 delete from courses where description like 'Materiali importati%';
+
+-- ===== Ricalcolo dei punti con le nuove regole (aperture fatte prima dell'aggiornamento) =====
+reset role;
+insert into courses (name) values ('Corso ricalcolo');
+select set_config('app.importing', '1', false);
+insert into files (course_id, title, original_name, storage_path, mime, kind, size, uploaded_by)
+select (select id from courses where name = 'Corso ricalcolo'), 'R' || g, 'r' || g || '.pdf', 'x/r' || g || '.pdf', 'application/pdf', 'pdf', 1,
+       '00000000-0000-0000-0000-00000000000a' from generate_series(1, 7) g;
+select set_config('app.importing', '', false);
+-- vecchie regole: Lucia apre R1 tre giorni diversi (+3 all'autore) e R1..R7 lo stesso giorno (+6); Nome apre R1 (+1)
+insert into file_opens (file_id, user_id, day) select id, '00000000-0000-0000-0000-00000000000d', current_date - 40 from files where title like 'R_';
+insert into file_opens (file_id, user_id, day) select id, '00000000-0000-0000-0000-00000000000d', current_date - d from files, generate_series(41, 42) d where title = 'R1';
+insert into file_opens (file_id, user_id, day) select id, '00000000-0000-0000-0000-00000000000b', current_date - 40 from files where title = 'R1';
+select set_config('test.adm', (select points from profiles where email = 'admin.uno@campus.unimib.it')::text, false);
+select set_config('test.luc', (select points from profiles where email = 'l.gatti@campus.unimib.it')::text, false);
+-- il ricalcolo riguarda tutte le aperture: lo rifaccio da zero per controllare solo questi file
+delete from file_opens where file_id not in (select id from files where title like 'R_');
+update profiles set points = points + 10 where email = 'admin.uno@campus.unimib.it';   -- 7 + 2 + 1 aperture con le vecchie regole
+delete from app_settings where key = 'points_v2';
+set client_min_messages = warning;
+\ir ../setup.sql
+set client_min_messages = notice;
+select pg_temp.expect((select points from profiles where email = 'admin.uno@campus.unimib.it') = current_setting('test.adm')::int + 40,
+  'ricalcolo: +5 per ogni studente diverso per file (8 coppie), al posto di +1 per apertura');
+select pg_temp.expect((select points from profiles where email = 'l.gatti@campus.unimib.it') = current_setting('test.luc')::int + 6,
+  'ricalcolo: chi ha aperto riceve +1 per file nuovo, max 5 al giorno (1 un giorno, 5 su 6 un altro)');
+select pg_temp.expect((select count(*) from app_settings where key = 'points_v2') = 1, 'ricalcolo eseguito una volta sola');
+delete from courses where name = 'Corso ricalcolo';
 
 -- ===== Docenti =====
 select pg_temp.expect((select count(*) from professors) = 62, 'elenco docenti caricato una sola volta (62)');
