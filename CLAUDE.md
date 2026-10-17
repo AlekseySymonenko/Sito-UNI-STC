@@ -34,7 +34,7 @@ immagini, audio e video. Fatto da Aleksey Symonenko (rappresentante, utente non 
 ## Funzionalità presenti
 Corsi per laurea (triennale 1–3, magistrale 1–2) e **anno accademico** (menu, normalizzato), menu ⋯
 sulle schede per modificare/spostare (solo admin); upload su B2 fino a 500 MB; anteprime
-PDF/immagini/audio/video; ricerca; classifica a leghe (punti: +10 file max 10/giorno, +1 apertura
+PDF/immagini/audio/video; dashboard con i corsi aperti di recente (localStorage, per dispositivo); ricerca; classifica a leghe (punti: +10 file max 10/giorno, +1 apertura
 altrui, −10 se un admin elimina); segnalazioni, sospensione utenti; file protetti 📌; pulizia
 automatica (meno aperti nell'ultimo anno, mai file < 14 giorni); pagine Rappresentanti e
 Professori (dati nel DB, modificabili dagli admin); firma "Fatto con ♥ da Aleksey Symonenko".
