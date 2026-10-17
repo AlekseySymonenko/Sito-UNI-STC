@@ -276,7 +276,7 @@ from generate_series(2, 4) i;
 reset role;
 select pg_temp.expect((select points from profiles where email = 'n.cognome@campus.unimib.it') = split_part(current_setting('test.pts'), ',', 1)::int + 25, 'tetto di punti per i file importati');
 select pg_temp.expect((select count(distinct course_id) from files where drive_id in ('d1', 'd2', 'd3', 'd4')) = 1, 'stesso corso e anno accademico: corso riutilizzato');
-update app_settings set value = '300' where key = 'import_points_cap';
+update app_settings set value = '0' where key = 'import_points_cap';
 -- autore non ancora iscritto; corso con anno non valido → "Da assegnare"; anno accademico diverso → altro corso
 set role anon;
 select import_register(current_setting('test.token'), jsonb_build_object('drive_id', 'n' || i, 'store', 'r2', 'path', 'import/n' || i || '.m4a',
@@ -289,7 +289,17 @@ select pg_temp.expect((select count(*) from import_pending where email = 'nuovo.
 select pg_temp.expect((select degree is null and study_year is null and year = '2025/2026' from courses c join files f on f.course_id = c.id where f.drive_id = 'n1'), 'anno non valido: corso da assegnare');
 select pg_temp.expect((select count(distinct course_id) from files where drive_id in ('d1', 'n1')) = 2, 'anno accademico diverso: corso separato');
 select pg_temp.expect((select needs_processing and storage = 'r2' from files where drive_id = 'n1'), 'registrazione su Cloudflare da comprimere');
+set role authenticated;
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000b","email":"n.cognome@campus.unimib.it"}', false);
+select set_config('test.rank', (select count(*) from leaderboard())::text, false);
+reset role;
+select pg_temp.expect((select points from import_credits where email = 'nuovo.studente@campus.unimib.it') = 20
+  and current_setting('test.rank')::int = (select count(*) from profiles where banned_at is null), 'chi non ha fatto il login non è in classifica (punti in attesa)');
 insert into auth.users values ('00000000-0000-0000-0000-0000000000ee', 'Nuovo.Studente@campus.unimib.it', '{"full_name":"Nuovo Studente"}');
+set role authenticated;
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000b","email":"n.cognome@campus.unimib.it"}', false);
+select pg_temp.expect((select points from leaderboard() where name = 'Nuovo Studente') = 20, 'dopo il login compare in classifica con i punti del Drive');
+reset role;
 select pg_temp.expect((select points = 20 and upload_count = 2 from profiles where email = 'nuovo.studente@campus.unimib.it'), 'primo accesso: punti del Drive accreditati');
 select pg_temp.expect((select count(*) from files where uploaded_by = '00000000-0000-0000-0000-0000000000ee') = 2, 'primo accesso: file del Drive attribuiti');
 select pg_temp.expect(not exists (select 1 from import_pending where email = 'nuovo.studente@campus.unimib.it'), 'primo accesso: attesa chiusa');
@@ -298,6 +308,7 @@ select import_register(current_setting('test.token'), jsonb_build_object('drive_
   'size', 10, 'name', 'Dopo.pdf', 'kind', 'pdf', 'mime', 'application/pdf', 'owner', 'nuovo.studente@campus.unimib.it', 'course', 'Fotochimica'));
 reset role;
 select pg_temp.expect((select points from profiles where email = 'nuovo.studente@campus.unimib.it') = 30, 'dopo l''iscrizione i punti arrivano subito');
+select pg_temp.expect((select value from app_settings where key = 'import_points_cap') = '0', 'nessun tetto ai punti dei file importati');
 -- Cloudflare pieno: l'importazione aspetta la compressione
 update app_settings set value = '12000' where key = 'r2_quota_bytes';
 set role anon;

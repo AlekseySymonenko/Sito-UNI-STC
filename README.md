@@ -140,7 +140,7 @@ Lo script [`drive-import/importa.gs`](drive-import/importa.gs) gira sui server d
   lo stesso corso con file di anni diversi diventa un corso per ogni anno accademico.
 - Saltati: file di sistema del Mac (`._…`, `__MACOSX`), doppioni "Copia di…", file fuori dalle cartelle dei corsi,
   formati non ammessi. I Documenti Google diventano PDF (i Fogli diventano Excel).
-- **Punti**: +10 per file importato, massimo 300 a persona (`import_points_per_file`, `import_points_cap`).
+- **Punti**: +10 per ogni file importato, senza tetto (`import_points_per_file`; `import_points_cap` = 0).
   Chi è già iscritto li riceve subito; chi si iscrive dopo li riceve al primo accesso, insieme ai suoi file.
 - Se l'archivio delle registrazioni è pieno, lo script aspetta che il robot abbia compresso i file e poi riprende.
 

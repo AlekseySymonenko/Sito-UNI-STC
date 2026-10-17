@@ -14,25 +14,34 @@
 const CARTELLA = 'INCOLLA_QUI_IL_LINK_DELLA_CARTELLA';
 const CODICE = 'INCOLLA_QUI_IL_CODICE_DI_SERVIZIO';
 
-// Anno di corso di ogni corso (nome della cartella, maiuscole/minuscole non contano).
+// Anno di corso di ogni corso, dai regolamenti 2026/27 (E2703Q triennale, F5402Q magistrale).
+// Si usa il nome che il corso avrà sul sito (dopo NOMI); maiuscole/minuscole non contano.
 // I corsi non elencati finiscono in "Da assegnare": li sposti poi dal sito con il menu ⋯.
 const ANNI = {
   triennale: {
     'Matematica I': 1, 'Matematica II': 1, 'Fisica I': 1, 'Chimica Generale e Laboratorio': 1, 'Chimica Organica I': 1,
-    'Fisica II': 2, 'Chimica Analitica e Laboratorio': 2, 'Chimica Fisica I': 2, 'Chimica Fisica II e Laboratorio': 2,
-    'Chimica Inorganica I e Laboratorio': 2, 'Chimica Organica II e Laboratorio': 2,
-    'Chimica Analitica Strumentale e Laboratorio': 3, 'Chimica Fisica III e Laboratorio': 3, 'Chimica Inorganica II e Laboratorio': 3,
-    'Chimica Organica III e Laboratorio': 3, 'Chimica Fisica Applicata': 3, 'Elementi di Polimeri': 3, 'Elementi di Biochimica': 3,
-    'Controllo Ambientale e Sicurezza': 3,
+    'Chimica Analitica e Laboratorio': 1,
+    'Chimica Fisica I': 2, 'Fisica II': 2, 'Chimica Fisica II e Laboratorio': 2, 'Chimica Inorganica I e Laboratorio': 2,
+    'Chimica Organica II e Laboratorio': 2, 'Elementi di Biochimica': 2,
+    'Chimica Analitica Strumentale e Laboratorio': 3, 'Chimica Organica III e Laboratorio': 3, 'Chimica Fisica III e Laboratorio': 3,
+    'Chimica Fisica Applicata': 3, 'Chimica Inorganica II e Laboratorio': 3, 'Controllo Ambientale e Sicurezza': 3,
+    'Elementi di Polimeri': 3,
   },
   magistrale: {
-    'Bioinorganica': 1, 'Biotecnologie': 1, 'Chemiometria': 1, 'Chimica delle Formulazioni Organiche e Polimeriche': 1,
-    'Chimica di Coordinazione e Metallorganica': 1, 'Chimica Fisica dello Stato Solido': 1, 'Chimica Fisica Superiore': 1,
-    'Chimica Macromolecolare': 1, 'Chimica Fisica dei Sistemi Complessi': 1, 'Chimica Organica Superiore': 1,
-    "Chimica Organica per l'Energetica Sostenibile": 1, 'Fondamenti Chimici della Sostenibilità': 1, 'Fotochimica': 1,
-    'Metodi Analitici per la Chimica delle Formulazioni': 1, 'Modellistica Molecolare': 1,
-    'Processi a basso impatto ambientale': 1, 'Teorie e Metodi per le Spettroscopie': 1, 'Termodinamica di non equilibrio': 1,
+    'Chemiometria': 1, 'Chimica Bioinorganica': 1, 'Chimica delle Formulazioni Organiche e Polimeriche': 1,
+    'Chimica di Coordinazione e Metallorganica': 1, 'Chimica Fisica dei Sistemi Complessi': 1, 'Chimica Fisica dello Stato Solido': 1,
+    'Chimica Fisica Superiore': 1, 'Chimica Macromolecolare': 1, "Chimica Organica per l'Energetica Sostenibile": 1,
+    'Chimica Organica Superiore': 1, 'Modellistica Molecolare': 1, 'Processi a basso impatto ambientale': 1,
+    'Teoria e Metodi per le Spettroscopie': 1, 'Termodinamica di non equilibrio': 1,
+    'Biotecnologie': 2, 'Fondamenti Chimici della Sostenibilità': 2, 'Fotochimica': 2,
+    'Metodi Analitici per la Chimica delle Formulazioni': 2,
   },
+};
+
+// Nome ufficiale (dal regolamento) per le cartelle chiamate diversamente sul Drive
+const NOMI = {
+  'Bioinorganica': 'Chimica Bioinorganica',
+  'Teorie e Metodi per le Spettroscopie': 'Teoria e Metodi per le Spettroscopie',
 };
 
 // ---- Da qui in giù non serve modificare nulla ------------------------------------------------------
@@ -331,20 +340,24 @@ function nomeFile_(name, mime) {
   return new RegExp('\\.' + ext + '$', 'i').test(clean) ? clean : clean.replace(/\.+$/, '') + '.' + ext;
 }
 
-// "CHIMICA FISICA SUPERIORE" → "Chimica Fisica Superiore"; gli altri nomi restano come sono
+// "CHIMICA FISICA SUPERIORE" → "Chimica Fisica Superiore", poi eventuale nome ufficiale da NOMI
 function nomeCorso_(n) {
   n = String(n || 'Senza corso').trim();
-  if (n !== n.toUpperCase()) return n;
-  const small = ['di', 'e', 'per', 'della', 'delle', 'dello', 'dei', 'degli', 'del', 'a', 'in', 'la', 'le', 'il'];
-  return n.toLowerCase().split(/\s+/).map(function (w, i) {
-    return i > 0 && small.indexOf(w) >= 0 ? w : w.charAt(0).toUpperCase() + w.slice(1);
-  }).join(' ');
+  if (n === n.toUpperCase()) {
+    const small = ['di', 'e', 'per', 'della', 'delle', 'dello', 'dei', 'degli', 'del', 'a', 'in', 'la', 'le', 'il'];
+    n = n.toLowerCase().split(/\s+/).map(function (w, i) {
+      return i > 0 && small.indexOf(w) >= 0 ? w : w.charAt(0).toUpperCase() + w.slice(1);
+    }).join(' ');
+  }
+  const k = Object.keys(NOMI).filter(function (x) { return norm_(x) === norm_(n); })[0];
+  return k ? NOMI[k] : n;
 }
 
+function norm_(s) { return String(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim(); }
+
 function annoDi_(laurea, corso) {
-  const norm = function (s) { return String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim(); };
   const elenco = ANNI[laurea] || {};
-  const k = Object.keys(elenco).filter(function (x) { return norm(x) === norm(corso); })[0];
+  const k = Object.keys(elenco).filter(function (x) { return norm_(x) === norm_(corso); })[0];
   return k ? elenco[k] : null;
 }
 

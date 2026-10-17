@@ -48,7 +48,7 @@ sulle schede per modificare/spostare (solo admin); upload su B2 fino a 500 MB; a
 PDF/immagini/audio/video; dashboard con i corsi aperti di recente (tabella `course_visits`, uguale su ogni dispositivo; localStorage solo di riserva); ricerca; classifica a leghe (punti: +10 file max 10/giorno, +1 apertura
 altrui, −10 se un admin elimina); segnalazioni, sospensione utenti; file protetti 📌; pulizia
 automatica per archivio (documenti: aperture ultimi 548 giorni; registrazioni: 365; mai file < 14 giorni né
-importati da < 6 mesi); importazione Drive con punti (+10/file, tetto 300, accreditati anche al primo accesso
+importati da < 6 mesi); importazione Drive con punti (+10/file, nessun tetto, accreditati anche al primo accesso
 via `import_pending`/`import_credits`); formati extra .cif/.mryx; pagine Rappresentanti e
 Professori (dati nel DB, modificabili dagli admin); firma "Fatto con ♥ da Aleksey Symonenko".
 Studenti: vedono tutto, caricano, creano corsi, segnalano. Admin: modificano/eliminano tutto,
@@ -77,6 +77,6 @@ gestiscono ruoli, sospensioni, contenuti delle pagine. Il primo utente è divent
 ## In sospeso
 - **Importazione dal vecchio Drive** (cartella `Scienze e Tecnologie Chimiche`, 704 file, 23,6 GB, 69 autori;
   ~20 GB sono registrazioni): codice pronto. L'utente deve: rieseguire setup.sql, configurare R2, ripubblicare B2,
-  generare il codice, Secrets GitHub, poi avviare `importa.gs`. Verificare con lui l'elenco `ANNI` (anni di corso
-  ipotizzati, magistrale tutta al 1° anno).
+  generare il codice, Secrets GitHub (fatto: R2 e robot funzionano), poi avviare `importa.gs`. `ANNI` e `NOMI` presi dai
+  regolamenti 2026/27 (E2703Q, F5402Q); solo corsi con file, niente corsi vuoti.
 - Possibili: cambio URL (organizzazione GitHub `appunti-stc`), nuovi formati (.key, .pages, .rtf, .csv).

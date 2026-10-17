@@ -129,9 +129,11 @@ insert into public.app_settings (key, value) values
                                        --   anche quando il robot scompatta uno ZIP e per un momento esistono entrambi)
   ('import_grace_days', '183'),        -- i file importati dal Drive sono protetti per 6 mesi
   ('import_points_per_file', '10'),    -- punti per ogni file importato…
-  ('import_points_cap', '300'),        -- …fino a un massimo per persona
+  ('import_points_cap', '0'),          -- …fino a un massimo per persona (0 = nessun tetto)
   ('import_max_mb', '3000')            -- dimensione massima di un file importato (gli ZIP vengono poi scompattati)
 on conflict (key) do nothing;
+-- Aggiornamento: nessun tetto ai punti dei file importati (prima 300)
+update public.app_settings set value = '0' where key = 'import_points_cap' and value = '300';
 -- Aggiornamento: Cloudflare da 9,5 a 8 GB (solo se non è stato cambiato a mano)
 update public.app_settings set value = '8589934592' where key = 'r2_quota_bytes' and value = '10200547328';
 -- Aggiornamento: il vecchio valore predefinito era 6 mesi
@@ -691,7 +693,7 @@ declare
   v_email  text := lower(nullif(trim(p ->> 'owner'), ''));
   v_user   uuid;
   v_per    int  := public.setting_int('import_points_per_file', 10);
-  v_cap    int  := public.setting_int('import_points_cap', 300);
+  v_cap    int  := public.setting_int('import_points_cap', 0);   -- 0 = nessun tetto
   v_files  int;
   v_delta  int;
 begin
@@ -727,7 +729,8 @@ begin
     insert into import_credits (email, files) values (v_email, 1)
     on conflict (email) do update set files = import_credits.files + 1
     returning files into v_files;
-    v_delta := least(v_files * v_per, v_cap) - (select points from import_credits where email = v_email);
+    v_delta := (case when v_cap > 0 then least(v_files * v_per, v_cap) else v_files * v_per end)
+               - (select points from import_credits where email = v_email);
     update import_credits set points = points + v_delta where email = v_email;
     if v_user is not null then
       update profiles set points = points + v_delta, upload_count = upload_count + 1 where id = v_user;
