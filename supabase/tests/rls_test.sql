@@ -208,6 +208,29 @@ select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000
 select pg_temp.expect(not (my_status() ->> 'banned')::boolean and (select count(*) from profiles) >= 3, 'riattivato: accesso ripristinato');
 reset role;
 
+-- ===== Corsi aperti di recente =====
+set role authenticated;
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000b","email":"n.cognome@campus.unimib.it"}', false);
+insert into courses (name) values ('Visita A'), ('Visita B');
+select record_course_visit((select id from courses where name = 'Visita A'));
+select record_course_visit((select id from courses where name = 'Visita B'));
+select record_course_visit((select id from courses where name = 'Visita A'));
+select record_course_visit(999999);
+select pg_temp.expect((select array_agg(c) from my_recent_courses() c) =
+  array[(select id from courses where name = 'Visita A'), (select id from courses where name = 'Visita B')], 'corsi recenti in ordine, senza doppioni');
+select pg_temp.expect_error('select * from course_visits', 'tabella visite non leggibile direttamente');
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000a","email":"admin.uno@campus.unimib.it"}', false);
+select pg_temp.expect((select count(*) from my_recent_courses()) = 0, 'ognuno vede solo i propri corsi recenti');
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000c","email":"intruso@gmail.com"}', false);
+select record_course_visit((select id from courses where name = 'Visita A'));
+reset role;
+select pg_temp.expect((select count(*) from course_visits) = 2, 'esterni non registrano visite');
+select pg_temp.expect((select count(*) from course_visits v join courses c on c.id = v.course_id
+  where c.name = 'Visita A') = 1, 'visita aggiornata, non duplicata');
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000a","email":"admin.uno@campus.unimib.it"}', false);
+delete from courses where name in ('Visita A', 'Visita B');
+select pg_temp.expect((select count(*) from course_visits) = 0, 'visite rimosse con il corso');
+
 -- ===== Docenti =====
 select pg_temp.expect((select count(*) from professors) = 62, 'elenco docenti caricato una sola volta (62)');
 select pg_temp.expect((select courses from professors where last_name = 'Di Credico') like 'Chimica generale%', 'dati docenti corretti');

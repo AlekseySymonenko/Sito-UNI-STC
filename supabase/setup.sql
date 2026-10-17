@@ -86,6 +86,14 @@ create table if not exists public.file_opens (
 );
 create index if not exists file_opens_day_idx on public.file_opens(file_id, day);
 
+-- Corsi aperti di recente da ciascuno studente (per la dashboard, uguale su ogni dispositivo)
+create table if not exists public.course_visits (
+  user_id    uuid not null references public.profiles(id) on delete cascade,
+  course_id  bigint not null references public.courses(id) on delete cascade,
+  visited_at timestamptz not null default now(),
+  primary key (user_id, course_id)
+);
+
 -- Impostazioni modificabili dagli amministratori (via SQL Editor)
 create table if not exists public.app_settings (
   key   text primary key,
@@ -319,6 +327,26 @@ returns bigint language sql stable security definer set search_path = public as 
   select case when public.is_campus() then public.setting_int('b2_quota_bytes', 10200547328) end
 $$;
 
+-- Ricorda che lo studente ha aperto un corso (ne tiene al massimo 12)
+create or replace function public.record_course_visit(cid bigint)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_campus() or not exists (select 1 from courses where id = cid) then return; end if;
+  insert into course_visits (user_id, course_id) values (auth.uid(), cid)
+  on conflict (user_id, course_id) do update set visited_at = now();
+  delete from course_visits v where v.user_id = auth.uid() and v.course_id not in (
+    select course_id from course_visits where user_id = auth.uid() order by visited_at desc limit 12);
+end;
+$$;
+
+-- Corsi aperti di recente dallo studente collegato, dal più recente
+create or replace function public.my_recent_courses()
+returns setof bigint language sql stable security definer set search_path = public as $$
+  select course_id from course_visits
+  where user_id = auth.uid() and public.is_campus()
+  order by visited_at desc limit 12;
+$$;
+
 -- Registra un'apertura (vista o download) di un file
 create or replace function public.record_file_open(fid bigint)
 returns void language plpgsql security definer set search_path = public as $$
@@ -514,12 +542,13 @@ alter table public.courses   enable row level security;
 alter table public.files     enable row level security;
 alter table public.audit_log enable row level security;
 alter table public.file_opens enable row level security;
+alter table public.course_visits enable row level security;
 alter table public.app_settings enable row level security;
 alter table public.reports enable row level security;
 alter table public.representatives enable row level security;
 alter table public.info_links enable row level security;
 alter table public.professors enable row level security;
-revoke all on public.file_opens, public.app_settings from anon, authenticated;
+revoke all on public.file_opens, public.app_settings, public.course_visits from anon, authenticated;
 
 drop policy if exists "profili visibili agli studenti" on public.profiles;
 create policy "profili visibili agli studenti" on public.profiles

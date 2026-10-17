@@ -304,6 +304,12 @@
       },
 
       async leaderboard() { return check(await sb.rpc('leaderboard')) || []; },
+      // Corsi aperti di recente (salvati sull'account). null se il database non è ancora aggiornato.
+      async recentCourses() {
+        var res = await sb.rpc('my_recent_courses');
+        return res.error ? null : (res.data || []).map(function (r) { return Number(typeof r === 'object' ? r.my_recent_courses : r); });
+      },
+      recordCourseVisit(courseId) { sb.rpc('record_course_visit', { cid: Number(courseId) }).then(function () {}, function () {}); },
       async banUser(userId, reason) { check(await sb.rpc('ban_user', { target: userId, reason: reason })); },
       async unbanUser(userId) { check(await sb.rpc('unban_user', { target: userId })); },
       async reportFile(fileId, reason) {
@@ -578,6 +584,8 @@
           return Object.assign({}, u, { uploads: files.filter(function (f) { return f.uploaded_by === u.id; }).length });
         });
       },
+      async recentCourses() { return null; }, // anteprima: memoria del dispositivo
+      recordCourseVisit() {},
       async leaderboard() {
         var list = users.filter(function (u) { return !u.banned_at; }).map(function (u, i) {
           var n = files.filter(function (f) { return f.uploaded_by === u.id; }).length;

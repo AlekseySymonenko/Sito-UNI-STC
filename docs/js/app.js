@@ -4,7 +4,7 @@
 
   // Versione del sito: deve coincidere con data-v in index.html. Se Safari ha in
   // memoria una pagina principale vecchia, la ricarichiamo (una volta) aggirando la cache.
-  var VERSION = '20261017a';
+  var VERSION = '20261017b';
   if (document.documentElement.getAttribute('data-v') !== VERSION) {
     var tried = false;
     try { tried = sessionStorage.getItem('reload-v') === VERSION; sessionStorage.setItem('reload-v', VERSION); } catch (e) { /* ignora */ }
@@ -151,7 +151,8 @@
     try { pref = localStorage.getItem('nav-courses'); } catch (e) { /* ignora */ }
     return pref === null ? active === 'courses' : pref === '1';
   }
-  // Corsi aperti di recente da questo utente (memorizzati sul suo dispositivo)
+  // Corsi aperti di recente da questo utente: salvati sull'account (uguali su ogni
+  // dispositivo); la copia locale serve solo se il database non è ancora aggiornato.
   function recentKey() { return 'recent-courses:' + (state.user ? state.user.id : ''); }
   function recentCourseIds() {
     try { return JSON.parse(localStorage.getItem(recentKey()) || '[]').map(Number).filter(Boolean); } catch (e) { return []; }
@@ -161,6 +162,7 @@
     if (!id) return;
     var ids = [id].concat(recentCourseIds().filter(function (x) { return x !== id; })).slice(0, 12);
     try { localStorage.setItem(recentKey(), JSON.stringify(ids)); } catch (e) { /* ignora */ }
+    Api.recordCourseVisit(id);
   }
   // Anno accademico in corso: da settembre si passa al successivo
   function currentAA() {
@@ -312,11 +314,12 @@
 
   async function dashboardPage() {
     loading('home');
-    var res = await Promise.all([Api.stats(), Api.listCourses(), Api.listFiles({ limit: 8 }), Api.listFiles({ mine: true, limit: 300 })]);
-    var stats = res[0], courses = res[1], recent = res[2], mine = res[3];
+    var res = await Promise.all([Api.stats(), Api.listCourses(), Api.listFiles({ limit: 8 }), Api.listFiles({ mine: true, limit: 300 }),
+      Api.recentCourses().catch(function () { return null; })]);
+    var stats = res[0], courses = res[1], recent = res[2], mine = res[3], visited = res[4] && res[4].length ? res[4] : recentCourseIds();
     var byId = {};
     courses.forEach(function (c) { byId[c.id] = c; });
-    var top = recentCourseIds().map(function (id) { return byId[id]; }).filter(Boolean).slice(0, 6);
+    var top = visited.map(function (id) { return byId[id]; }).filter(Boolean).slice(0, 6);
     var hasRecent = top.length > 0;
     // Se ne mancano, completiamo con i corsi con più materiali
     courses.slice().sort(function (a, b) { return b.file_count - a.file_count; }).forEach(function (c) {

@@ -110,6 +110,12 @@ raggruppa automaticamente i corsi per anno accademico, con un menu a tendina in 
 sull'anno in corso; da settembre passa al successivo). Gli anni scritti a mano in altri formati
 (es. "2026-27") vengono riconosciuti e uniformati.
 
+## Dashboard personale
+
+La dashboard mostra a ciascuno i **corsi aperti di recente** (pagina del corso o un suo file),
+dal più recente; l'elenco è salvato sull'account, quindi è lo stesso su iPad, Mac e telefono.
+Chi non ha ancora aperto corsi vede quelli con più materiali.
+
 ## Pagina Rappresentanti
 
 Contatti dei rappresentanti e link utili (siti, app, corso sicurezza, esami scoglio, ecc.).
