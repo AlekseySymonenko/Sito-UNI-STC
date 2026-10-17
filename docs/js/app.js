@@ -4,7 +4,7 @@
 
   // Versione del sito: deve coincidere con data-v in index.html. Se Safari ha in
   // memoria una pagina principale vecchia, la ricarichiamo (una volta) aggirando la cache.
-  var VERSION = '20261018d';
+  var VERSION = '20261018e';
   if (document.documentElement.getAttribute('data-v') !== VERSION) {
     var tried = false;
     try { tried = sessionStorage.getItem('reload-v') === VERSION; sessionStorage.setItem('reload-v', VERSION); } catch (e) { /* ignora */ }
@@ -380,7 +380,11 @@
     if (view === 'da-assegnare' && !unassigned.length) view = 'triennale';
     var count = function (deg) { return all.filter(function (c) { return c.degree === deg; }).length; };
 
-    var aaSelect = '<label class="aa-select">' + icon('clock') + '<span>Anno accademico</span><select data-aa-select data-view="' + view + '" data-anno="' + onlyYear + '">' +
+    var aaLabel = aaSel === 'tutti' ? 'Tutti gli anni' : aaSel === 'nessuno' ? 'Senza anno accademico' : aaSel + (aaSel === currentAA() ? ' (in corso)' : '');
+    // tutta la barra apre il menu: il <select> invisibile la copre per intero
+    var aaSelect = '<label class="aa-select">' + icon('clock') + '<span>Anno accademico</span><strong class="aa-value">' + esc(aaLabel) + '</strong>' +
+      '<span class="aa-caret">' + icon('chevron') + '</span>' +
+      '<select data-aa-select aria-label="Anno accademico" data-view="' + view + '" data-anno="' + onlyYear + '">' +
       '<option value="tutti"' + (aaSel === 'tutti' ? ' selected' : '') + '>Tutti gli anni</option>' +
       aaList.map(function (v) { return '<option value="' + v + '"' + (aaSel === v ? ' selected' : '') + '>' + v + (v === currentAA() ? ' (in corso)' : '') + '</option>'; }).join('') +
       (hasNoAA ? '<option value="nessuno"' + (aaSel === 'nessuno' ? ' selected' : '') + '>Senza anno accademico</option>' : '') +
