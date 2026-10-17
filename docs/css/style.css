@@ -137,6 +137,13 @@ svg { width: 20px; height: 20px; flex-shrink: 0; }
   color: #fff; font-weight: 700; font-size: .85rem; letter-spacing: .02em; flex-shrink: 0;
 }
 .avatar.sm { width: 34px; height: 34px; font-size: .78rem; }
+.avatar.lg { width: 72px; height: 72px; font-size: 1.4rem; flex: none; }
+.profile-head { display: flex; align-items: center; gap: 18px; }
+.profile-head h1 { margin: 2px 0 4px; }
+.profile-head p { margin: 0; }
+a.user-link { color: inherit; text-decoration: none; }
+a.user-link:hover strong, .podium-name:hover strong { color: var(--primary); text-decoration: underline; }
+.podium-name { color: inherit; text-decoration: none; }
 .dropdown {
   position: absolute; right: 0; top: calc(100% + 8px); width: 260px; background: var(--surface);
   border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow-lg); padding: 6px;

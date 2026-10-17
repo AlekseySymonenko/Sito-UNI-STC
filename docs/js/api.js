@@ -243,6 +243,8 @@
         if (opts.courseId) q = q.eq('course_id', opts.courseId);
         if (opts.kind) q = q.eq('kind', opts.kind);
         if (opts.mine && me) q = q.eq('uploaded_by', me.id);
+        if (opts.uploader) q = q.eq('uploaded_by', opts.uploader);
+        if (opts.authorName) q = q.is('uploaded_by', null).eq('author_name', opts.authorName);
         var s = opts.q ? safeQuery(opts.q) : '';
         if (s) q = q.or('title.ilike.*' + s + '*,description.ilike.*' + s + '*,original_name.ilike.*' + s + '*');
         q = q.limit(opts.limit || 300);
@@ -251,6 +253,11 @@
 
       async getFile(id) {
         return check(await sb.from('files').select(FILE_SELECT).eq('id', id).maybeSingle());
+      },
+
+      // Profilo pubblico di uno studente (solo dati visibili a tutti)
+      async getProfile(id) {
+        return check(await sb.from('profiles').select('id, name, role, points, upload_count, created_at').eq('id', id).maybeSingle());
       },
 
       async uploadFile(courseId, file, meta, onProgress) {
@@ -571,11 +578,19 @@
           if (opts.courseId && f.course_id !== opts.courseId) return false;
           if (opts.kind && f.kind !== opts.kind) return false;
           if (opts.mine && (!me || f.uploaded_by !== me.id)) return false;
+          if (opts.uploader && f.uploaded_by !== opts.uploader) return false;
+          if (opts.authorName && (f.uploaded_by || f.author_name !== opts.authorName)) return false;
           if (s && ![f.title, f.description, f.original_name].some(function (v) { return (v || '').toLowerCase().indexOf(s) >= 0; })) return false;
           return true;
         }).sort(function (a, b) { return b.created_at.localeCompare(a.created_at); }).slice(0, opts.limit || 300).map(withRefs);
       },
       async getFile(id) { var f = files.find(function (x) { return x.id === id; }); return f ? withRefs(f) : null; },
+      async getProfile(id) {
+        var u = users.find(function (x) { return x.id === id; });
+        if (!u) return null;
+        var n = files.filter(function (f) { return f.uploaded_by === id; }).length;
+        return { id: u.id, name: u.name, role: u.role, points: n * 10, upload_count: n, created_at: u.created_at };
+      },
       async uploadFile(courseId, file, meta, onProgress) {
         var t = typeFor(file.name);
         if (!t) throw new Error('Formato non ammesso: ' + file.name);

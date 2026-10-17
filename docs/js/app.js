@@ -4,7 +4,7 @@
 
   // Versione del sito: deve coincidere con data-v in index.html. Se Safari ha in
   // memoria una pagina principale vecchia, la ricarichiamo (una volta) aggirando la cache.
-  var VERSION = '20261018e';
+  var VERSION = '20261018f';
   if (document.documentElement.getAttribute('data-v') !== VERSION) {
     var tried = false;
     try { tried = sessionStorage.getItem('reload-v') === VERSION; sessionStorage.setItem('reload-v', VERSION); } catch (e) { /* ignora */ }
@@ -141,6 +141,12 @@
 
   // Chi ha caricato il file: il profilo, oppure il nome dell'autore sul vecchio Drive finché non si iscrive
   function authorOf(f) { return f.uploader ? f.uploader.name : (f.author_name || 'utente rimosso'); }
+  // Nome cliccabile: porta alla pagina con tutto ciò che quella persona ha pubblicato
+  function authorLink(f) {
+    if (f.uploaded_by && f.uploader) return '<a class="meta-link" href="#/utente/' + f.uploaded_by + '">' + esc(f.uploader.name) + '</a>';
+    if (f.author_name) return '<a class="meta-link" href="#/autore?nome=' + encodeURIComponent(f.author_name) + '">' + esc(f.author_name) + '</a>';
+    return esc(authorOf(f));
+  }
 
   function credit() {
     return '<span class="credit">Fatto con <span class="heart" aria-label="amore">♥</span> da <strong>Aleksey Symonenko</strong></span>';
@@ -264,7 +270,7 @@
         '<div class="file-meta"><span class="tag kind-' + f.kind + '">' + k.label + '</span>' +
           (withCourse && f.course ? '<a class="meta-link" href="#/corso/' + f.course.id + '">' + esc(f.course.name) + '</a><span class="dot">·</span>' : '') +
           '<span>' + bytes(f.size) + '</span><span class="dot">·</span><span>' + date(f.created_at) + '</span>' +
-          '<span class="dot">·</span><span>di ' + esc(authorOf(f)) + '</span>' +
+          '<span class="dot">·</span><span>di ' + authorLink(f) + '</span>' +
         '</div>' +
       '</div>' +
       '<div class="file-actions">' +
@@ -561,7 +567,7 @@
             '<dt>Corso</dt><dd><a href="#/corso/' + f.course_id + '">' + esc(f.course ? f.course.name : '') + '</a></dd>' +
             '<dt>Nome file</dt><dd class="break">' + esc(f.original_name) + '</dd>' +
             '<dt>Dimensione</dt><dd>' + bytes(f.size) + '</dd>' +
-            '<dt>Caricato da</dt><dd>' + esc(authorOf(f)) + (!f.uploader && f.author_name ? ' <span class="muted small">(dal vecchio Drive, non ancora iscritto)</span>' : '') + '</dd>' +
+            '<dt>Caricato da</dt><dd>' + authorLink(f) + (!f.uploader && f.author_name ? ' <span class="muted small">(dal vecchio Drive, non ancora iscritto)</span>' : '') + '</dd>' +
             '<dt>Data</dt><dd>' + dateTime(f.created_at) + '</dd>' +
             '<dt>Aperture</dt><dd>' + (f.open_count || 0) + (f.last_opened_at ? ' · ultima ' + date(f.last_opened_at) : '') + '</dd>' +
           '</dl>' +
@@ -607,6 +613,40 @@
       '<section class="panel">' +
         (files.length ? fileList(files, true) : empty('upload', 'Non hai ancora caricato nessun file.', '<a class="btn btn-primary" href="#/corsi">' + icon('book') + 'Scegli un corso</a>')) +
       '</section>', 'I miei caricamenti');
+    loadThumbs();
+  }
+
+  // Pagina di uno studente: lega, punti e tutto ciò che ha pubblicato
+  async function userPage(id) {
+    loading('');
+    var res = await Promise.all([Api.getProfile(id), Api.listFiles({ uploader: id, limit: 500 }), ensureLeagues().then(function () { return Api.leaderboard(); })]);
+    var p = res[0], files = res[1], board = res[2] || [];
+    if (!p) return errorPage('Non trovato', 'Questo studente non esiste o non è più iscritto.');
+    var L = window.Leagues;
+    var row = board.filter(function (r) { return r.user_id === id; })[0];
+    var lg = L.leagueFor(p.points || 0, row ? Number(row.rank_pos) : 0);
+    var mine = state.user && state.user.id === id;
+    render('', '<a class="back-link" href="#/classifica" data-action="go-back">' + icon('arrow-left') + 'Indietro</a>' +
+      '<section class="panel profile-head">' + L.emblem(lg.tier.key, 88) +
+        '<div><p class="eyebrow">' + (p.role === 'admin' ? 'Amministratore' : 'Studente') + (mine ? ' · sei tu' : '') + '</p>' +
+        '<h1>' + esc(p.name) + '</h1>' +
+        '<p class="muted"><strong>' + esc(lg.label) + '</strong> · ' + (p.points || 0) + ' punti · ' + files.length + ' file pubblicat' + (files.length === 1 ? 'o' : 'i') +
+        (row ? ' · posizione #' + row.rank_pos : '') + '</p></div></section>' +
+      '<section class="panel"><div class="panel-head"><h2>Materiali pubblicati</h2></div>' +
+        (files.length ? fileList(files, true) : empty('folder', 'Nessun file pubblicato.')) + '</section>', p.name);
+    loadThumbs();
+  }
+
+  // Autore del vecchio Drive non ancora iscritto: i suoi file (i punti arriveranno al primo accesso)
+  async function authorPage(name) {
+    loading('');
+    var files = name ? await Api.listFiles({ authorName: name, limit: 500 }) : [];
+    render('', '<a class="back-link" href="#/" data-action="go-back">' + icon('arrow-left') + 'Indietro</a>' +
+      '<section class="panel profile-head"><span class="avatar lg">' + esc(initials(name || '?')) + '</span>' +
+        '<div><p class="eyebrow">Dal vecchio Drive · non ancora iscritto</p><h1>' + esc(name || 'Autore') + '</h1>' +
+        '<p class="muted">' + files.length + ' file pubblicat' + (files.length === 1 ? 'o' : 'i') + '. Quando accederà al sito riceverà i punti e comparirà in classifica.</p></div></section>' +
+      '<section class="panel"><div class="panel-head"><h2>Materiali pubblicati</h2></div>' +
+        (files.length ? fileList(files, true) : empty('folder', 'Nessun file trovato.')) + '</section>', name || 'Autore');
     loadThumbs();
   }
 
@@ -793,7 +833,7 @@
     var podiumHtml = podium.length ? '<section class="podium">' + order.map(function (i) {
       var r = podium[i];
       return '<div class="podium-place place-' + (i + 1) + '">' + L.emblem(r.league.tier.key, i === 0 ? 92 : 72) +
-        '<span class="podium-rank">' + (i + 1) + '</span><strong>' + esc(r.name) + '</strong>' +
+        '<span class="podium-rank">' + (i + 1) + '</span><a class="podium-name" href="#/utente/' + r.user_id + '"><strong>' + esc(r.name) + '</strong></a>' +
         '<small>' + esc(r.league.label) + ' · ' + r.points + ' pt</small></div>';
     }).join('') + '</section>' : '';
 
@@ -801,7 +841,7 @@
       (list.length ? '<div class="table-wrap"><table class="table rank-table"><thead><tr><th>#</th><th>Studente</th><th>Lega</th><th class="right">File</th><th class="right">Punti</th></tr></thead><tbody>' +
         list.map(function (r) {
           return '<tr class="' + (r.user_id === state.user.id ? 'is-me' : '') + '"><td class="rank-pos">' + r.rank_pos + '</td>' +
-            '<td><div class="user-cell"><span class="avatar sm">' + esc(initials(r.name)) + '</span><strong>' + esc(r.name) + (r.user_id === state.user.id ? ' (tu)' : '') + '</strong></div></td>' +
+            '<td><a class="user-cell user-link" href="#/utente/' + r.user_id + '"><span class="avatar sm">' + esc(initials(r.name)) + '</span><strong>' + esc(r.name) + (r.user_id === state.user.id ? ' (tu)' : '') + '</strong></a></td>' +
             '<td><div class="league-cell">' + L.emblem(r.league.tier.key, 32) + '<span>' + esc(r.league.label) + '</span></div></td>' +
             '<td class="right">' + (r.upload_count || 0) + '</td><td class="right"><strong>' + r.points + '</strong></td></tr>';
         }).join('') + '</tbody></table></div>' : empty('trophy', 'Ancora nessun punteggio: carica il primo file!')) + '</section>';
@@ -1008,6 +1048,8 @@
       else if ((m = /^\/file\/(\d+)$/.exec(h.path))) await filePage(Number(m[1]));
       else if (h.path === '/cerca') await searchPage(h.params);
       else if (h.path === '/miei') await minePage();
+      else if ((m = /^\/utente\/([0-9a-f-]{36}|u-[\w-]+)$/.exec(h.path))) await userPage(m[1]);
+      else if (h.path === '/autore') await authorPage(h.params.get('nome') || '');
       else if (h.path === '/classifica') await rankingPage();
       else if (h.path === '/rappresentanti') await repsPage();
       else if (h.path === '/professori') await profsPage();
@@ -1127,6 +1169,10 @@
           }).join('') + '</ul>';
         } catch (err) { cbox.innerHTML = ''; fail(err); }
         el.disabled = false;
+        return;
+      }
+      case 'go-back': {
+        if (history.length > 1) history.back(); else go('#/');
         return;
       }
       case 'copy-token': {
