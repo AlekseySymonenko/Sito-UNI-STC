@@ -4,7 +4,7 @@
 
   // Versione del sito: deve coincidere con data-v in index.html. Se Safari ha in
   // memoria una pagina principale vecchia, la ricarichiamo (una volta) aggirando la cache.
-  var VERSION = '20261018c';
+  var VERSION = '20261018d';
   if (document.documentElement.getAttribute('data-v') !== VERSION) {
     var tried = false;
     try { tried = sessionStorage.getItem('reload-v') === VERSION; sessionStorage.setItem('reload-v', VERSION); } catch (e) { /* ignora */ }
@@ -148,7 +148,12 @@
 
   var currentPlace = '';
   var currentAAFilter = ''; // anno accademico scelto nella pagina Corsi (es. "2026/2027")
-  function aaQuery(sep) { return currentAAFilter ? sep + 'aa=' + encodeURIComponent(currentAAFilter.replace('/', '-')) : ''; }
+  // Scelta del menu "Anno accademico" (anche "tutti"): resta finché non la cambi, anche ricaricando la pagina
+  var aaChoice = '';
+  try { aaChoice = sessionStorage.getItem('aa-choice') || ''; } catch (e) { /* ignora */ }
+  function aaQuery(sep) { return aaChoice ? sep + 'aa=' + encodeURIComponent(aaChoice.replace('/', '-')) : ''; }
+  // Per i link "Nuovo corso": solo un anno accademico vero (non "tutti")
+  function aaNewQuery(sep) { return currentAAFilter ? sep + 'aa=' + encodeURIComponent(currentAAFilter.replace('/', '-')) : ''; }
   function navCoursesOpen(active) {
     var pref = null;
     try { pref = localStorage.getItem('nav-courses'); } catch (e) { /* ignora */ }
@@ -361,10 +366,12 @@
     everything.forEach(function (c) { c.aa = Api.normAA(c.year); });
     var aaList = everything.map(function (c) { return c.aa; }).filter(function (v, i, a) { return v && a.indexOf(v) === i; }).sort().reverse();
     var hasNoAA = everything.some(function (c) { return !c.aa; });
-    var aaParam = (params.get('aa') || '').replace('-', '/');
+    var aaParam = (params.get('aa') || aaChoice).replace('-', '/');
     var aaSel = aaParam === 'tutti' || aaParam === 'nessuno' || aaList.indexOf(aaParam) >= 0 ? aaParam
       : (aaList.indexOf(currentAA()) >= 0 ? currentAA() : 'tutti');
-    currentAAFilter = aaSel === 'tutti' ? '' : aaSel;
+    currentAAFilter = aaSel === 'tutti' || aaSel === 'nessuno' ? '' : aaSel;
+    aaChoice = aaSel;
+    try { sessionStorage.setItem('aa-choice', aaSel); } catch (e) { /* ignora */ }
     var all = everything.filter(function (c) { return aaSel === 'tutti' || (aaSel === 'nessuno' ? !c.aa : c.aa === aaSel); });
     var unassigned = all.filter(function (c) { return !placementOf(c); });
     var onlyYear = Number(params.get('anno')) || 0;
@@ -380,7 +387,7 @@
       '</select></label>';
     var head = '<div class="page-head"><div><p class="eyebrow">Catalogo</p><h1>Corsi</h1>' +
       '<p class="muted">Scegli un insegnamento per consultarne i materiali o contribuire.</p></div>' +
-      '<a class="btn btn-primary" href="#/nuovo-corso?' + (view !== 'da-assegnare' ? 'posto=' + view + ':' + (onlyYear || 1) : '') + aaQuery('&') + '">' + icon('plus') + 'Nuovo corso</a></div>' +
+      '<a class="btn btn-primary" href="#/nuovo-corso?' + (view !== 'da-assegnare' ? 'posto=' + view + ':' + (onlyYear || 1) : '') + aaNewQuery('&') + '">' + icon('plus') + 'Nuovo corso</a></div>' +
       '<div class="courses-toolbar">' + aaSelect +
       '<form class="filter-bar" data-form="filter-courses"><div class="input-ic">' + icon('search') +
       '<input type="search" name="q" value="' + esc(params.get('q') || '') + '" placeholder="Cerca un corso per nome, codice o docente"></div>' +
@@ -397,11 +404,13 @@
         : '<div class="panel">' + empty('book', 'Nessun corso corrisponde alla ricerca.') + '</div>';
     } else if (!all.length) {
       body = '<div class="panel">' + empty('book', everything.length ? 'Nessun corso per l\'anno accademico ' + esc(aaSel) + '.' : 'Non ci sono ancora corsi.',
-        '<a class="btn btn-primary" href="#/nuovo-corso' + aaQuery('?') + '">' + icon('plus') + 'Crea un corso</a>') + '</div>';
+        '<a class="btn btn-primary" href="#/nuovo-corso' + aaNewQuery('?') + '">' + icon('plus') + 'Crea un corso</a>') + '</div>';
     } else {
       var seg = '<nav class="degree-tabs" aria-label="Corso di laurea">' +
         DEGREES.map(function (d) {
-          return '<a href="#/corsi?laurea=' + d.key + aaQuery('&') + '" class="' + (view === d.key ? 'active' : '') + '">' +
+          // l'anno di corso scelto resta passando da triennale a magistrale (se esiste anche lì)
+          var keepYear = onlyYear && d.years.indexOf(onlyYear) >= 0 ? '&anno=' + onlyYear : '';
+          return '<a href="#/corsi?laurea=' + d.key + keepYear + aaQuery('&') + '" class="' + (view === d.key ? 'active' : '') + '">' +
             '<strong>Laurea ' + d.label + '</strong><span>' + count(d.key) + ' cors' + (count(d.key) === 1 ? 'o' : 'i') + '</span></a>';
         }).join('') +
         (unassigned.length ? '<a href="#/corsi?laurea=da-assegnare' + aaQuery('&') + '" class="unassigned ' + (view === 'da-assegnare' ? 'active' : '') + '"><strong>Da assegnare</strong><span>' + unassigned.length + '</span></a>' : '') +
@@ -422,7 +431,7 @@
           var list = all.filter(function (c) { return c.degree === deg.key && Number(c.study_year) === y; });
           return '<section class="year-section"><div class="year-head"><h2><span class="year-badge">' + y + '°</span> anno</h2>' +
             '<span class="muted small">' + list.length + ' cors' + (list.length === 1 ? 'o' : 'i') + '</span>' +
-            '<a class="btn btn-ghost btn-sm year-add" href="#/nuovo-corso?posto=' + deg.key + ':' + y + aaQuery('&') + '">' + icon('plus') + 'Aggiungi</a></div>' +
+            '<a class="btn btn-ghost btn-sm year-add" href="#/nuovo-corso?posto=' + deg.key + ':' + y + aaNewQuery('&') + '">' + icon('plus') + 'Aggiungi</a></div>' +
             (list.length ? '<div class="course-grid">' + list.map(courseItem).join('') + '</div>'
               : '<p class="year-empty muted small">Nessun corso in questo anno.</p>') + '</section>';
         }).join('');
