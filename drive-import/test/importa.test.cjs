@@ -39,7 +39,7 @@ const byId = {}; (function walk(f) { byId[f.id] = f; f.kids.forEach(walk); })(tr
 call({ cmd: 'drive', files: Object.fromEntries(Object.values(files).map((f) => [f.id, f.buf.toString('base64')])) });
 
 const iter = (arr, wrap, start = 0, fid) => { let i = start; return { hasNext: () => i < arr.length, next: () => { clock += 300; return wrap(arr[i++]); }, getContinuationToken: () => fid + ':' + i }; };
-const fileObj = (f) => ({ getMimeType: () => f.mime, getOwner: () => ({ getEmail: () => f.owner }), getDateCreated: () => f.date, getName: () => f.name,
+const fileObj = (f) => ({ getMimeType: () => f.mime, getOwner: () => ({ getEmail: () => f.owner, getName: () => (f.owner.startsWith('autore1') ? '' : 'Nome ' + f.owner.slice(6, 7)) }), getDateCreated: () => f.date, getName: () => f.name,
   getSize: () => (f.mime.startsWith('application/vnd.google-apps') ? 0 : f.buf.length), getId: () => f.id });
 const folderObj = (f) => ({ getName: () => f.name, getId: () => f.id, getFolders: () => iter(f.kids, folderObj), getFiles: () => iter(f.files, fileObj, 0, f.id) });
 // --- Fogli, proprietà, attivatori -------------------------------------------------
@@ -116,6 +116,8 @@ assert.strictEqual(row('Domande.pdf').kind, 'pdf', 'documento Google esportato i
 const lez = row('Lez 13 - 9.m4a');
 assert.deepStrictEqual([lez.course, lez.degree, lez.study_year, lez.aa, lez.store, lez.kind, lez.needs_processing], ['Chemiometria', 'magistrale', 1, '2024/2025', 'r2', 'audio', true]);
 assert.ok(/^autore\d@campus\.unimib\.it$/.test(lez.owner));
+assert.ok(st.db.every((r) => r.author_name), 'nome dell\'autore su ogni file importato');
+assert.ok(st.db.some((r) => r.author_name === 'Autore1'), 'senza nome Google: ricavato dall\'email');
 const obj = (path) => st.objects.find(([k]) => k.endsWith('/' + path));
 assert.deepStrictEqual(obj(lez.path).slice(1), [big1.length, big1.subarray(0, 4).toString('hex'), big1.subarray(-4).toString('hex')], 'file grande ricomposto identico');
 const z = row('Videolezioni Chemiometria.zip');

@@ -4,7 +4,7 @@
 
   // Versione del sito: deve coincidere con data-v in index.html. Se Safari ha in
   // memoria una pagina principale vecchia, la ricarichiamo (una volta) aggirando la cache.
-  var VERSION = '20261018b';
+  var VERSION = '20261018c';
   if (document.documentElement.getAttribute('data-v') !== VERSION) {
     var tried = false;
     try { tried = sessionStorage.getItem('reload-v') === VERSION; sessionStorage.setItem('reload-v', VERSION); } catch (e) { /* ignora */ }
@@ -139,6 +139,9 @@
       '</div>';
   }
 
+  // Chi ha caricato il file: il profilo, oppure il nome dell'autore sul vecchio Drive finché non si iscrive
+  function authorOf(f) { return f.uploader ? f.uploader.name : (f.author_name || 'utente rimosso'); }
+
   function credit() {
     return '<span class="credit">Fatto con <span class="heart" aria-label="amore">♥</span> da <strong>Aleksey Symonenko</strong></span>';
   }
@@ -256,7 +259,7 @@
         '<div class="file-meta"><span class="tag kind-' + f.kind + '">' + k.label + '</span>' +
           (withCourse && f.course ? '<a class="meta-link" href="#/corso/' + f.course.id + '">' + esc(f.course.name) + '</a><span class="dot">·</span>' : '') +
           '<span>' + bytes(f.size) + '</span><span class="dot">·</span><span>' + date(f.created_at) + '</span>' +
-          '<span class="dot">·</span><span>di ' + esc(f.uploader ? f.uploader.name : 'utente rimosso') + '</span>' +
+          '<span class="dot">·</span><span>di ' + esc(authorOf(f)) + '</span>' +
         '</div>' +
       '</div>' +
       '<div class="file-actions">' +
@@ -545,7 +548,7 @@
             '<dt>Corso</dt><dd><a href="#/corso/' + f.course_id + '">' + esc(f.course ? f.course.name : '') + '</a></dd>' +
             '<dt>Nome file</dt><dd class="break">' + esc(f.original_name) + '</dd>' +
             '<dt>Dimensione</dt><dd>' + bytes(f.size) + '</dd>' +
-            '<dt>Caricato da</dt><dd>' + esc(f.uploader ? f.uploader.name : 'utente rimosso') + '</dd>' +
+            '<dt>Caricato da</dt><dd>' + esc(authorOf(f)) + (!f.uploader && f.author_name ? ' <span class="muted small">(dal vecchio Drive, non ancora iscritto)</span>' : '') + '</dd>' +
             '<dt>Data</dt><dd>' + dateTime(f.created_at) + '</dd>' +
             '<dt>Aperture</dt><dd>' + (f.open_count || 0) + (f.last_opened_at ? ' · ultima ' + date(f.last_opened_at) : '') + '</dd>' +
           '</dl>' +

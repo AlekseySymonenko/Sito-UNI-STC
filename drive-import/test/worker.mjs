@@ -46,6 +46,10 @@ function supabase(method, url, body) {
       if (db.some((r) => r.drive_id === a.p_drive_id)) return j('exists');
       if (used(a.p_store) + a.p_size > (a.p_store === 'r2' ? r2Quota : 1e12)) return j('full');
       return j('ok');
+    case '/rest/v1/rpc/import_set_author': {
+      if (!ok) return j({ message: 'no' }, 400);
+      let k = 0; db.forEach((r) => { if (r.drive_id === a.p_drive_id) { r.author_name = a.p_name; k++; } }); return j(k);
+    }
     case '/rest/v1/rpc/import_register': {
       if (!ok) return j({ message: 'no' }, 400);
       const ex = db.find((r) => r.drive_id === a.p.drive_id); if (ex) return j(ex.id);
@@ -72,6 +76,7 @@ globalThis.fetch = async (input, init = {}) => {
 async function serve(req) {
   const url = new URL(req.url); const body = Buffer.from(req.body || '', 'base64');
   if (url.host === 'www.googleapis.com') return drive(url, req.headers);
+  if (url.host.endsWith('supabase.co') && url.pathname.startsWith('/rest/v1/')) return supabase(req.method, url, body);
   if (url.pathname.startsWith('/functions/v1/')) {
     const res = await handler(new Request(req.url, { method: req.method, headers: req.headers, body: req.method === 'GET' ? undefined : body }));
     return resp(res.status, await res.text(), Object.fromEntries(res.headers));

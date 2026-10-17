@@ -81,6 +81,7 @@ alter table public.files add column if not exists drive_id text;           -- fi
 alter table public.files add column if not exists imported_at timestamptz; -- data dell'importazione
 alter table public.files add column if not exists needs_processing boolean not null default false; -- da comprimere (robot)
 alter table public.files add column if not exists processing_error text;
+alter table public.files add column if not exists author_name text;        -- nome dell'autore sul Drive (finché non si iscrive)
 create unique index if not exists files_drive_id_idx on public.files(drive_id);
 create index if not exists files_processing_idx on public.files(id) where needs_processing;
 
@@ -285,6 +286,7 @@ begin
     -- le registrazioni su Cloudflare vengono compresse dal robot
     new.needs_processing := new.storage = 'r2' and new.kind in ('audio', 'video');
     new.processing_error := null;
+    new.author_name := null;
   end if;
   return new;
 end $$;
@@ -742,6 +744,18 @@ begin
   return v_id;
 end $$;
 
+-- Nome dell'autore di un file importato (mostrato finché non si iscrive; i punti arrivano solo col login)
+create or replace function public.import_set_author(token text, p_drive_id text, p_name text)
+returns integer language plpgsql volatile security definer set search_path = public as $$
+declare n integer;
+begin
+  perform public.require_service(token);
+  update files set author_name = left(nullif(trim(p_name), ''), 120)
+  where drive_id = p_drive_id or drive_id like replace(replace(p_drive_id, '%', '\%'), '_', '\_') || '#%';
+  get diagnostics n = row_count;
+  return n;
+end $$;
+
 -- Robot: registrazioni da comprimere (o ZIP da scompattare)
 create or replace function public.robot_pending(token text, lim integer default 50)
 returns table(id bigint, storage text, storage_path text, storage_version text, kind text, mime text, original_name text, size bigint)
@@ -790,6 +804,7 @@ begin
           left(p ->> 'name', 255), p ->> 'path', f.storage, nullif(p ->> 'version', ''),
           p ->> 'mime', p ->> 'kind', (p ->> 'size')::bigint, f.uploaded_by, f.created_at, f.imported_at, v_drive, false)
   returning id into v_id;
+  update files set author_name = f.author_name where id = v_id;
   insert into import_pending (file_id, email) select v_id, email from import_pending where file_id = parent_id;
   perform set_config('app.importing', '', true);
   perform set_config('app.robot', '', true);

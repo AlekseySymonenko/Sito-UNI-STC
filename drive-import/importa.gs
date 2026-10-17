@@ -46,6 +46,7 @@ const NOMI = {
 
 // ---- Da qui in giù non serve modificare nulla ------------------------------------------------------
 const FUNZIONE = 'https://bbyaljjyjfhufesjxycf.supabase.co/functions/v1/B2';
+const DATABASE = 'https://bbyaljjyjfhufesjxycf.supabase.co/rest/v1/rpc/';
 const CHIAVE_PUBBLICA = 'sb_publishable_i2fK_GSxrDxBBXTLZrnccQ_5Ct0ml8F'; // la stessa di docs/config.js (pubblica)
 const MAX_MS = 4.5 * 60 * 1000;     // Google ferma gli script dopo 6 minuti
 const ATTESA_PIENO_MIN = 15;        // archivio pieno: riprova dopo che il robot ha compresso
@@ -249,7 +250,7 @@ function importaFile_(props, r, start, step) {
   const meta = {
     token: CODICE, driveId: id, name: name, title: name.replace(/\.[^.]+$/, ''),
     description: 'Dal vecchio Drive dei rappresentanti' + (parts.length > 3 ? ' · Cartella: ' + parts.slice(3).join(' / ') : ''),
-    created: created.toISOString(), owner: proprietario_(id), course: corso,
+    created: created.toISOString(), owner: proprietario_(id).email, course: corso,
     degree: anno ? laurea : null, studyYear: anno, aa: annoAccademico_(created),
   };
 
@@ -270,7 +271,7 @@ function importaFile_(props, r, start, step) {
     }
     step('richiesta al sito');
     const b = chiama_(Object.assign({ action: 'import-begin', size: size }, meta));
-    if (b.status === 'exists') return 'già importato';
+    if (b.status === 'exists') { segnaAutore_(id); return 'già importato'; }
     if (b.status === 'unsupported') return 'saltato: formato non ammesso';
     if (b.status === 'too_big') return 'saltato: troppo grande';
     if (b.status === 'full') return 'pieno';
@@ -281,6 +282,7 @@ function importaFile_(props, r, start, step) {
       carica_(b.url, blob);
       step('registrazione nel sito');
       const done = chiama_(Object.assign({ action: 'import-finish', store: b.store, key: b.key }, meta));
+      segnaAutore_(id);
       return 'importato (' + (done.store === 'r2' ? 'Cloudflare' : 'Backblaze') + ')';
     }
     cur = { id: id, store: b.store, key: b.key, uploadId: b.uploadId, partSize: b.partSize, size: size, parts: [] };
@@ -303,6 +305,7 @@ function importaFile_(props, r, start, step) {
   }
   const done = chiama_(Object.assign({ action: 'import-finish', store: cur.store, key: cur.key, uploadId: cur.uploadId, parts: cur.parts }, meta));
   props.deleteProperty('corrente');
+  segnaAutore_(id);
   return 'importato (' + (done.store === 'r2' ? 'Cloudflare' : 'Backblaze') + ', ' + total + ' parti)';
 }
 
@@ -359,7 +362,50 @@ function carica_(url, blob) {
 }
 
 function proprietario_(id) {
-  try { const o = DriveApp.getFileById(id).getOwner(); return o ? o.getEmail() : ''; } catch (e) { return ''; }
+  try {
+    const o = DriveApp.getFileById(id).getOwner();
+    return o ? { email: o.getEmail() || '', name: o.getName() || '' } : { email: '', name: '' };
+  } catch (e) { return { email: '', name: '' }; }
+}
+
+// "n.cognome@campus.unimib.it" → "N. Cognome" (se Google non fornisce il nome)
+function nomeDaEmail_(email) {
+  return String(email || '').split('@')[0].split(/[._]/).filter(Boolean)
+    .map(function (w) { return w.length === 1 ? w.toUpperCase() + '.' : w.charAt(0).toUpperCase() + w.slice(1); }).join(' ');
+}
+
+// Nome dell'autore visibile sul sito anche prima che si iscriva (i punti arrivano solo col login)
+function segnaAutore_(id) {
+  const o = proprietario_(id);
+  const name = o.name || nomeDaEmail_(o.email);
+  if (!name) return;
+  try {
+    const res = UrlFetchApp.fetch(DATABASE + 'import_set_author', {
+      method: 'post', contentType: 'application/json', muteHttpExceptions: true, headers: { apikey: CHIAVE_PUBBLICA },
+      payload: JSON.stringify({ token: CODICE, p_drive_id: id, p_name: name }),
+    });
+    if (res.getResponseCode() !== 200) Logger.log('   (nome autore non salvato: ' + res.getResponseCode() + ')');
+  } catch (e) { Logger.log('   (nome autore non salvato: ' + e + ')'); }
+}
+
+// Una tantum: aggiunge il nome dell'autore ai file importati prima di questa versione dello script
+function aggiorna_autori() {
+  const props = PropertiesService.getScriptProperties();
+  const sh = SpreadsheetApp.openById(props.getProperty('foglio')).getSheetByName('Importazione');
+  const start = Date.now();
+  const n = sh.getLastRow() - 1;
+  const data = sh.getRange(2, 1, n, COL.ordine).getValues();
+  let fatti = 0;
+  for (let i = Number(props.getProperty('autori_riga') || 0); i < n; i++) {
+    if (Date.now() - start > MAX_MS) {
+      props.setProperty('autori_riga', String(i));
+      Logger.log('Tempo finito: riesegui aggiorna_autori per continuare (' + fatti + ' file aggiornati).');
+      return;
+    }
+    if (/^(importato|già importato)/.test(String(data[i][COL.stato - 1]))) { segnaAutore_(String(data[i][COL.id - 1])); fatti++; }
+  }
+  props.deleteProperty('autori_riga');
+  Logger.log('Nomi degli autori aggiornati: ' + fatti + ' file.');
 }
 
 function estensione_(name, mime) {

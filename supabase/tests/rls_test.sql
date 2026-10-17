@@ -289,6 +289,12 @@ select pg_temp.expect((select count(*) from import_pending where email = 'nuovo.
 select pg_temp.expect((select degree is null and study_year is null and year = '2025/2026' from courses c join files f on f.course_id = c.id where f.drive_id = 'n1'), 'anno non valido: corso da assegnare');
 select pg_temp.expect((select count(distinct course_id) from files where drive_id in ('d1', 'n1')) = 2, 'anno accademico diverso: corso separato');
 select pg_temp.expect((select needs_processing and storage = 'r2' from files where drive_id = 'n1'), 'registrazione su Cloudflare da comprimere');
+set role anon;
+select pg_temp.expect(import_set_author(current_setting('test.token'), 'n1', ' Nuovo Studente ') = 1, 'nome dell''autore del Drive registrato');
+select pg_temp.expect_error($q$select import_set_author('sbagliato-sbagliato-sbagliato-sbagliato', 'n1', 'X')$q$, 'nome autore: codice richiesto');
+reset role;
+select pg_temp.expect((select author_name = 'Nuovo Studente' and uploaded_by is null from files where drive_id = 'n1'), 'nome visibile anche prima del login, senza account');
+
 set role authenticated;
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000b","email":"n.cognome@campus.unimib.it"}', false);
 select set_config('test.rank', (select count(*) from leaderboard())::text, false);
@@ -318,10 +324,11 @@ update app_settings set value = '8589934592' where key = 'r2_quota_bytes';
 -- uno studente non può fingere un'importazione
 set role authenticated;
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000b","email":"n.cognome@campus.unimib.it"}', false);
-insert into files (course_id, title, original_name, storage_path, storage, mime, kind, size, imported_at, drive_id, needs_processing)
-values ((select id from courses where name = 'Fotochimica'), 'Finto', 'f.m4a', '00000000-0000-0000-0000-00000000000b/f.m4a', 'r2', 'audio/mp4', 'audio', 10, now(), 'finto', false);
+insert into files (course_id, title, original_name, storage_path, storage, mime, kind, size, imported_at, drive_id, needs_processing, author_name)
+values ((select id from courses where name = 'Fotochimica'), 'Finto', 'f.m4a', '00000000-0000-0000-0000-00000000000b/f.m4a', 'r2', 'audio/mp4', 'audio', 10, now(), 'finto', false, 'Falso Autore');
 reset role;
 select pg_temp.expect((select imported_at is null and drive_id is null and needs_processing from files where title = 'Finto'), 'studente: niente date o id di importazione, registrazione da comprimere');
+select pg_temp.expect((select author_name is null from files where title = 'Finto'), 'studente: non può inventare un nome d''autore');
 -- Pulizia: file importati protetti per 6 mesi; registrazioni e documenti con finestre diverse; archivi separati
 update files set created_at = now() - interval '800 days' where drive_id in ('d1', 'n1') or title = 'Finto';
 select pg_temp.expect(not exists (select 1 from storage_eviction_order('b2') where file_id = (select id from files where drive_id = 'd1')), 'file importato da poco: protetto');
