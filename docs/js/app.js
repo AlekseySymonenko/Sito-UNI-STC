@@ -4,7 +4,7 @@
 
   // Versione del sito: deve coincidere con data-v in index.html. Se Safari ha in
   // memoria una pagina principale vecchia, la ricarichiamo (una volta) aggirando la cache.
-  var VERSION = '20261018j';
+  var VERSION = '20261018k';
   if (document.documentElement.getAttribute('data-v') !== VERSION) {
     var tried = false;
     try { tried = sessionStorage.getItem('reload-v') === VERSION; sessionStorage.setItem('reload-v', VERSION); } catch (e) { /* ignora */ }
@@ -351,9 +351,10 @@
         stat('book', stats.courses, 'Corsi') + stat('folder', stats.files, 'Materiali') +
         stat('users', stats.users, 'Studenti iscritti') + stat('upload', mine.length, 'I tuoi contributi') +
       '</section>' +
-      '<div class="two-col">' +
+      // corsi a tutta larghezza, sotto i caricamenti recenti
+      '<div class="dash-stack">' +
         '<section class="panel"><div class="panel-head"><h2>' + (hasRecent ? 'Aperti di recente' : 'Corsi in evidenza') + '</h2><a class="link" href="#/corsi">Tutti i corsi →</a></div>' +
-          (top.length ? '<div class="course-grid compact">' + top.map(courseCard).join('') + '</div>'
+          (top.length ? '<div class="course-grid dash-courses">' + top.map(courseCard).join('') + '</div>'
             : empty('book', 'Non ci sono ancora corsi.', '<a class="btn btn-primary" href="#/nuovo-corso">' + icon('plus') + 'Crea il primo corso</a>')) +
         '</section>' +
         '<section class="panel"><div class="panel-head"><h2>Caricati di recente</h2><a class="link" href="#/cerca">Cerca →</a></div>' +
