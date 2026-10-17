@@ -658,12 +658,25 @@ returns boolean language sql stable security definer set search_path = public as
   select public.service_ok(token)
 $$;
 
--- Nuovo codice di servizio (solo amministratori). Il vecchio smette di funzionare.
+-- Proprietario del sito: il primo account registrato (diventato admin in automatico).
+-- Solo lui può rigenerare il codice di servizio.
+insert into public.app_settings (key, value)
+select 'owner_id', id::text from public.profiles order by created_at, id limit 1
+on conflict (key) do nothing;
+
+create or replace function public.is_owner()
+returns boolean language sql stable security definer set search_path = public as $$
+  select public.is_admin() and auth.uid()::text = coalesce(
+    (select value from app_settings where key = 'owner_id'),
+    (select id::text from profiles order by created_at, id limit 1))
+$$;
+
+-- Nuovo codice di servizio (solo il proprietario). Il vecchio smette di funzionare.
 create or replace function public.new_service_token()
 returns text language plpgsql volatile security definer set search_path = public as $$
 declare t text := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
 begin
-  if not public.is_admin() then raise exception 'Operazione riservata agli amministratori'; end if;
+  if not public.is_owner() then raise exception 'Solo il proprietario del sito può generare il codice di servizio'; end if;
   insert into app_settings (key, value) values ('service_token_hash', encode(sha256(convert_to(t, 'UTF8')), 'hex'))
   on conflict (key) do update set value = excluded.value;
   insert into audit_log (user_id, action) values (auth.uid(), 'codice_servizio_generato');
@@ -838,6 +851,7 @@ begin
   if not public.is_admin() then raise exception 'Operazione riservata agli amministratori'; end if;
   return json_build_object(
     'has_token', exists (select 1 from app_settings where key = 'service_token_hash'),
+    'is_owner', public.is_owner(),
     'imported', (select count(*) from files where imported_at is not null),
     'imported_b2', (select count(*) from files where imported_at is not null and storage = 'b2'),
     'imported_r2', (select count(*) from files where imported_at is not null and storage = 'r2'),

@@ -4,7 +4,7 @@
 
   // Versione del sito: deve coincidere con data-v in index.html. Se Safari ha in
   // memoria una pagina principale vecchia, la ricarichiamo (una volta) aggirando la cache.
-  var VERSION = '20261018h';
+  var VERSION = '20261018i';
   if (document.documentElement.getAttribute('data-v') !== VERSION) {
     var tried = false;
     try { tried = sessionStorage.getItem('reload-v') === VERSION; sessionStorage.setItem('reload-v', VERSION); } catch (e) { /* ignora */ }
@@ -783,7 +783,8 @@
   function importPanel(st) {
     var n = function (v) { return Number(v) || 0; };
     return '<section class="panel import"><div class="panel-head wrap"><h2>' + icon('upload') + 'Importazione dal vecchio Drive</h2>' +
-        '<button class="btn btn-ghost btn-sm" type="button" data-action="new-service-token">' + icon('lock') + (st.has_token ? 'Genera un nuovo codice' : 'Genera il codice di servizio') + '</button></div>' +
+        // solo il proprietario del sito (il database rifiuta comunque gli altri)
+        (st.is_owner ? '<button class="btn btn-ghost btn-sm" type="button" data-action="new-service-token">' + icon('lock') + (st.has_token ? 'Genera un nuovo codice' : 'Genera il codice di servizio') + '</button>' : '') + '</div>' +
       '<div data-token-box></div>' +
       (n(st.imported) || n(st.processing)
         ? '<ul class="import-stats">' +

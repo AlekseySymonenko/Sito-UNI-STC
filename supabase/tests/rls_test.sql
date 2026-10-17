@@ -242,6 +242,17 @@ select pg_temp.expect((storage_usage('r2') ->> 'quota')::bigint = 8589934592, 's
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000a","email":"admin.uno@campus.unimib.it"}', false);
 select set_config('test.token', new_service_token(), false);
 select pg_temp.expect(length(current_setting('test.token')) = 64, 'codice di servizio generato');
+select pg_temp.expect((import_status() ->> 'is_owner')::boolean, 'il primo utente è il proprietario');
+reset role;
+update profiles set role = 'admin' where email = 'n.cognome@campus.unimib.it';
+set role authenticated;
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000b","email":"n.cognome@campus.unimib.it"}', false);
+select pg_temp.expect_error('select new_service_token()', 'un altro amministratore non rigenera il codice');
+select pg_temp.expect(not (import_status() ->> 'is_owner')::boolean, 'altro admin: pulsante nascosto');
+reset role;
+update profiles set role = 'student' where email = 'n.cognome@campus.unimib.it';
+set role authenticated;
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000a","email":"admin.uno@campus.unimib.it"}', false);
 select pg_temp.expect((import_status() ->> 'has_token')::boolean, 'stato: codice presente');
 reset role;
 select set_config('test.pts', (select points || ',' || upload_count from profiles where email = 'n.cognome@campus.unimib.it'), false);

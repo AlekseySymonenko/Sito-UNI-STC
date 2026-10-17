@@ -616,7 +616,7 @@
         return { origin: location.origin, results: [{ store: 'b2', ok: true, steps: [], message: 'Anteprima: nessun archivio reale da verificare.' }] };
       },
       async importStatus() {
-        return { has_token: false, imported: 0, imported_b2: 0, imported_r2: 0, processing: 0, authors: 0, authors_waiting: 0, errors: [], last: null };
+        return { has_token: false, is_owner: true, imported: 0, imported_b2: 0, imported_r2: 0, processing: 0, authors: 0, authors_waiting: 0, errors: [], last: null };
       },
       async newServiceToken() {
         requireAdmin();
