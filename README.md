@@ -85,18 +85,69 @@ I file già caricati su Supabase restano visibili; i nuovi vanno su B2.
 La chiave di B2 resta solo nei Secrets di Supabase: il sito non la vede mai.
 
 ### Pulizia automatica dello spazio
-Se un nuovo file non ci sta nei 9,5 GB, il sistema elimina **solo quanto basta**, scegliendo:
-1. i file aperti meno volte nell'ultimo anno (ogni studente conta al massimo una volta al giorno);
+Ogni archivio (Backblaze per i documenti, Cloudflare per le registrazioni) ha un limite di 9,5 GB.
+Se un nuovo file non ci sta, il sistema elimina **solo quanto basta e solo da quell'archivio**, scegliendo:
+1. i file aperti meno volte (ogni studente conta al massimo una volta al giorno): per i **documenti**
+   si contano le aperture dell'**ultimo anno e mezzo**, per le **registrazioni** dell'**ultimo anno**;
 2. a parità, quelli aperti (o caricati) meno di recente.
 
-Non vengono mai eliminati i file caricati da meno di 14 giorni né quelli **protetti 📌**
-(pulsante nella pagina del file, solo amministratori). Se non c'è abbastanza da eliminare,
-il caricamento viene rifiutato. In *Amministrazione* si vedono i prossimi file eliminabili e nel
-registro attività ogni eliminazione automatica.
+Non vengono mai eliminati i file caricati da meno di 14 giorni, quelli **importati dal vecchio Drive nei
+primi 6 mesi** e quelli **protetti 📌** (pulsante nella pagina del file, solo amministratori). Se non c'è
+abbastanza da eliminare, il caricamento viene rifiutato. In *Amministrazione* si vedono i prossimi file
+eliminabili e nel registro attività ogni eliminazione automatica.
 
 I numeri si cambiano dallo SQL Editor di Supabase, per esempio:
 `update app_settings set value = '30' where key = 'evict_grace_days';`
-(chiavi: `b2_quota_bytes`, `evict_grace_days`, `evict_window_days`).
+(chiavi: `b2_quota_bytes`, `r2_quota_bytes`, `evict_grace_days`, `evict_window_days` (registrazioni),
+`evict_window_days_docs` (documenti), `import_grace_days`, `import_points_per_file`, `import_points_cap`).
+
+## Registrazioni su Cloudflare R2 (10 GB gratis, download illimitati)
+
+Audio e video vanno su **Cloudflare R2**: altri 10 GB gratuiti e, soprattutto, download gratuiti senza
+limiti (Backblaze ne concede 1 GB al giorno). Finché R2 non è configurato, tutto continua ad andare su B2.
+Un **robot su GitHub** (gratuito) comprime ogni ora le registrazioni nuove: audio in qualità voce
+(circa 20 MB per ora di lezione), video in 720p; gli ZIP di registrazioni vengono scompattati.
+
+1. **Account**: <https://dash.cloudflare.com/sign-up> → registrati e conferma l'email.
+2. **R2**: menu a sinistra *R2 Object Storage* → attiva il piano gratuito (chiede una carta: nessun addebito
+   sotto i 10 GB, e il sito si ferma a 9,5 GB).
+3. **Bucket**: *Create bucket* → nome `appunti-stc-registrazioni`, *Location: Automatic* → *Create bucket*.
+4. **CORS**: nel bucket → *Settings* → *CORS Policy* → *Add CORS policy* → incolla:
+   ```json
+   [{"AllowedOrigins":["https://alekseysymonenko.github.io"],"AllowedMethods":["GET","PUT","HEAD"],"AllowedHeaders":["*"],"ExposeHeaders":["ETag"],"MaxAgeSeconds":3600}]
+   ```
+5. **Chiave**: pagina *R2 Object Storage* → *Manage API tokens* → *Create API token* → permessi
+   **Object Read & Write**, solo il bucket appena creato → *Create*. Copia **Access Key ID** e
+   **Secret Access Key** (mostrata una volta sola). L'**Account ID** è nella pagina R2 (a destra).
+6. **Supabase** → *Edge Functions → Secrets*: aggiungi `R2_ACCOUNT_ID`, `R2_KEY_ID` (Access Key ID),
+   `R2_APP_KEY` (Secret Access Key), `R2_BUCKET` (`appunti-stc-registrazioni`). Poi ripubblica la funzione **B2**
+   con il nuovo [`supabase/functions/b2/index.ts`](supabase/functions/b2/index.ts).
+7. **Codice di servizio**: sito → *Amministrazione* → *Importazione dal vecchio Drive* → *Genera il codice di servizio* → copia.
+8. **GitHub** (robot): questo repository → *Settings → Secrets and variables → Actions → New repository secret*:
+   `SERVICE_TOKEN` (il codice del punto 7), `R2_ACCOUNT_ID`, `R2_KEY_ID`, `R2_APP_KEY`, `R2_BUCKET`.
+   Prova: *Actions → Robot compressione registrazioni → Run workflow* → deve diventare verde.
+
+Le chiavi si incollano **solo** su Supabase e GitHub (Secrets cifrati): non vanno mai scritte nel codice o in chat.
+
+## Importazione dal vecchio Drive
+
+Lo script [`drive-import/importa.gs`](drive-import/importa.gs) gira sui server di Google e manda i file
+**direttamente** agli archivi del sito: niente da scaricare sul computer, nulla viene modificato sul Drive.
+- Struttura: `Triennale|Magistrale / Corso / sottocartelle` → laurea, corso (anno di corso dall'elenco `ANNI`
+  nello script; i corsi non elencati vanno in *Da assegnare*), sottocartelle nella descrizione del file.
+- **Anno accademico** dalla data di caricamento su Drive (dal 1° settembre si passa all'anno successivo):
+  lo stesso corso con file di anni diversi diventa un corso per ogni anno accademico.
+- Saltati: file di sistema del Mac (`._…`, `__MACOSX`), doppioni "Copia di…", file fuori dalle cartelle dei corsi,
+  formati non ammessi. I Documenti Google diventano PDF (i Fogli diventano Excel).
+- **Punti**: +10 per file importato, massimo 300 a persona (`import_points_per_file`, `import_points_cap`).
+  Chi è già iscritto li riceve subito; chi si iscrive dopo li riceve al primo accesso, insieme ai suoi file.
+- Se l'archivio delle registrazioni è pieno, lo script aspetta che il robot abbia compresso i file e poi riprende.
+
+Come si usa: script.google.com (con l'account che vede il Drive) → *Nuovo progetto* → incolla `importa.gs` →
+scrivi `CARTELLA` (link della cartella) e `CODICE` (codice di servizio) → controlla `ANNI` → funzione **avvia** →
+*Esegui* → autorizza. Lo script lavora a blocchi e riparte da solo; l'avanzamento è nel foglio
+"Importazione Drive" e in *Amministrazione*. Se qualche file finisce in errore: funzione **riprova_errori**.
+Si può rieseguire senza creare doppioni.
 
 ## Corsi per laurea e anno
 
@@ -173,8 +224,10 @@ docs/            il sito (HTML, CSS, JavaScript) pubblicato da GitHub Pages
   js/app.js      pagine e interfaccia
 supabase/
   setup.sql      tabelle, permessi (Row Level Security) e archivio file
-  functions/b2/  funzione che firma i link di caricamento/scaricamento su Backblaze B2
+  functions/b2/  funzione che firma i link di caricamento/scaricamento (Backblaze B2 e Cloudflare R2)
   tests/         test dei permessi su PostgreSQL locale: sh supabase/tests/run.sh
+drive-import/    inventario.gs e importa.gs (script Google), robot.py (compressione, GitHub Actions)
+.github/workflows/robot.yml   robot che comprime le registrazioni ogni ora
 Test della funzione B2: node --experimental-strip-types --test supabase/functions/b2/test/*.test.ts
 ```
 I permessi sono imposti dal database (Row Level Security), non dall'interfaccia.

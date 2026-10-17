@@ -66,16 +66,37 @@ create index if not exists files_uploader_idx on public.files(uploaded_by);
 
 -- Dove si trova il file: archivio Supabase oppure Backblaze B2 (aggiunto in seguito)
 alter table public.files add column if not exists storage text not null default 'supabase';
-do $$ begin
-  alter table public.files add constraint files_storage_check check (storage in ('supabase', 'b2'));
-exception when duplicate_object then null;
-end $$;
+-- 'b2' = Backblaze (documenti), 'r2' = Cloudflare R2 (registrazioni audio e video)
+alter table public.files drop constraint if exists files_storage_check;
+alter table public.files add constraint files_storage_check check (storage in ('supabase', 'b2', 'r2'));
 
 -- Statistiche di utilizzo per la pulizia automatica dell'archivio B2
 alter table public.files add column if not exists storage_version text;
 alter table public.files add column if not exists open_count integer not null default 0;
 alter table public.files add column if not exists last_opened_at timestamptz;
 alter table public.files add column if not exists pinned boolean not null default false;
+
+-- Importazione dal vecchio Google Drive e compressione automatica delle registrazioni
+alter table public.files add column if not exists drive_id text;           -- file d'origine su Drive (niente doppioni)
+alter table public.files add column if not exists imported_at timestamptz; -- data dell'importazione
+alter table public.files add column if not exists needs_processing boolean not null default false; -- da comprimere (robot)
+alter table public.files add column if not exists processing_error text;
+create unique index if not exists files_drive_id_idx on public.files(drive_id);
+create index if not exists files_processing_idx on public.files(id) where needs_processing;
+
+-- Autori del Drive non ancora iscritti: i loro file e punti vengono assegnati al primo accesso.
+-- Le email restano qui, non leggibili dagli studenti.
+create table if not exists public.import_pending (
+  file_id bigint primary key references public.files(id) on delete cascade,
+  email   text not null
+);
+create index if not exists import_pending_email_idx on public.import_pending(email);
+create table if not exists public.import_credits (
+  email  text primary key,
+  files  integer not null default 0,
+  points integer not null default 0,   -- punti spettanti per i file importati (con tetto)
+  paid   integer not null default 0    -- punti già accreditati a un profilo
+);
 
 -- Aperture: ogni studente conta al massimo una volta al giorno per file
 create table if not exists public.file_opens (
@@ -102,7 +123,13 @@ create table if not exists public.app_settings (
 insert into public.app_settings (key, value) values
   ('b2_quota_bytes', '10200547328'),   -- 9,5 GB: sotto i 10 GB gratuiti di Backblaze
   ('evict_grace_days', '14'),          -- i file più recenti di così non vengono mai eliminati
-  ('evict_window_days', '365')         -- periodo in cui si contano le aperture (un anno: copre entrambi i semestri)
+  ('evict_window_days', '365'),        -- registrazioni audio/video: aperture contate nell'ultimo anno
+  ('evict_window_days_docs', '548'),   -- documenti (PDF, appunti, foto…): aperture contate nell'ultimo anno e mezzo
+  ('r2_quota_bytes', '10200547328'),   -- 9,5 GB: sotto i 10 GB gratuiti di Cloudflare R2
+  ('import_grace_days', '183'),        -- i file importati dal Drive sono protetti per 6 mesi
+  ('import_points_per_file', '10'),    -- punti per ogni file importato…
+  ('import_points_cap', '300'),        -- …fino a un massimo per persona
+  ('import_max_mb', '3000')            -- dimensione massima di un file importato (gli ZIP vengono poi scompattati)
 on conflict (key) do nothing;
 -- Aggiornamento: il vecchio valore predefinito era 6 mesi
 update public.app_settings set value = '365' where key = 'evict_window_days' and value = '180';
@@ -209,6 +236,17 @@ begin
     )
     on conflict (id) do nothing;
     insert into public.audit_log (user_id, action) values (new.id, 'primo_accesso');
+    -- File caricati in passato sul vecchio Drive: diventano suoi, con i relativi punti
+    if exists (select 1 from public.import_pending where email = v_email) then
+      update public.files set uploaded_by = new.id
+      where id in (select file_id from public.import_pending where email = v_email) and uploaded_by is null;
+      update public.profiles p set
+        upload_count = p.upload_count + (select count(*) from public.import_pending where email = v_email),
+        points = p.points + coalesce((select c.points - c.paid from public.import_credits c where c.email = v_email), 0)
+      where p.id = new.id;
+      update public.import_credits set paid = points where email = v_email;
+      delete from public.import_pending where email = v_email;
+    end if;
   end if;
   return new;
 end $$;
@@ -233,8 +271,16 @@ create trigger course_defaults before insert on public.courses
 create or replace function public.file_defaults()
 returns trigger language plpgsql as $$
 begin
-  new.uploaded_by := auth.uid();
-  new.created_at := now();
+  -- l'importazione dal Drive (funzioni riservate qui sotto) imposta autore e data originali
+  if coalesce(current_setting('app.importing', true), '') <> '1' then
+    new.uploaded_by := auth.uid();
+    new.created_at := now();
+    new.imported_at := null;
+    new.drive_id := null;
+    -- le registrazioni su Cloudflare vengono compresse dal robot
+    new.needs_processing := new.storage = 'r2' and new.kind in ('audio', 'video');
+    new.processing_error := null;
+  end if;
   return new;
 end $$;
 drop trigger if exists file_defaults on public.files;
@@ -247,10 +293,19 @@ returns trigger language plpgsql security definer set search_path = public as $$
 begin
   if tg_table_name = 'files' then
     if tg_op = 'INSERT' then
-      insert into audit_log (user_id, action, details)
-      values (auth.uid(), 'file_caricato', new.original_name || ' → ' || (select name from courses where id = new.course_id));
+      if coalesce(current_setting('app.importing', true), '') = '1' then
+        if coalesce(current_setting('app.robot', true), '') <> '1' then
+          insert into audit_log (user_id, action, details)
+          values (null, 'file_importato', new.original_name || ' → ' || (select name from courses where id = new.course_id));
+        end if;
+      else
+        insert into audit_log (user_id, action, details)
+        values (auth.uid(), 'file_caricato', new.original_name || ' → ' || (select name from courses where id = new.course_id));
+      end if;
     elsif tg_op = 'DELETE' then
-      if current_setting('app.auto_evict', true) = '1' then
+      if current_setting('app.robot', true) = '1' then
+        insert into audit_log (user_id, action, details) values (null, 'archivio_scompattato', old.original_name);
+      elsif current_setting('app.auto_evict', true) = '1' then
         insert into audit_log (user_id, action, details)
         values (null, 'file_eliminato_auto', old.original_name || ' (' || old.open_count || ' aperture)');
       else
@@ -307,7 +362,8 @@ returns json language sql stable security definer set search_path = public as $$
     'files',   (select count(*) from files),
     'users',   (select count(*) from profiles),
     'bytes',   (select coalesce(sum(size), 0) from files),
-    'b2_bytes', (select coalesce(sum(size), 0) from files where storage = 'b2')
+    'b2_bytes', (select coalesce(sum(size), 0) from files where storage = 'b2'),
+    'r2_bytes', (select coalesce(sum(size), 0) from files where storage = 'r2')
   ) end
 $$;
 
@@ -325,6 +381,24 @@ $$;
 create or replace function public.b2_quota_bytes()
 returns bigint language sql stable security definer set search_path = public as $$
   select case when public.is_campus() then public.setting_int('b2_quota_bytes', 10200547328) end
+$$;
+
+-- Spazio di ciascun archivio ('b2' Backblaze, 'r2' Cloudflare): uso interno
+create or replace function public.storage_used(st text)
+returns bigint language sql stable security definer set search_path = public as $$
+  select coalesce(sum(size), 0)::bigint from files where storage = st
+$$;
+create or replace function public.storage_quota(st text)
+returns bigint language sql stable security definer set search_path = public as $$
+  select public.setting_int(st || '_quota_bytes', 10200547328)
+$$;
+revoke execute on function public.storage_used(text), public.storage_quota(text) from public, anon, authenticated;
+
+-- Spazio usato e limite, per gli studenti collegati
+create or replace function public.storage_usage(st text)
+returns json language sql stable security definer set search_path = public as $$
+  select case when public.is_campus() and st in ('b2', 'r2')
+    then json_build_object('used', public.storage_used(st), 'quota', public.storage_quota(st)) end
 $$;
 
 -- Ricorda che lo studente ha aperto un corso (ne tiene al massimo 12)
@@ -364,35 +438,44 @@ begin
   end if;
 end $$;
 
--- File eliminabili automaticamente, dal meno utile al più utile
-create or replace function public.b2_eviction_order()
+-- File eliminabili automaticamente da un archivio, dal meno utile al più utile.
+-- Aperture contate nell'ultimo anno per le registrazioni, nell'ultimo anno e mezzo per i documenti.
+drop function if exists public.b2_eviction_order();
+create or replace function public.storage_eviction_order(st text)
 returns table(file_id bigint, file_title text, bytes bigint, opens bigint, last_activity timestamptz, path text, version text)
 language sql stable security definer set search_path = public as $$
   select f.id, f.title, f.size,
          (select count(*) from file_opens o
-           where o.file_id = f.id and o.day > current_date - public.setting_int('evict_window_days', 365)::int),
+           where o.file_id = f.id and o.day > current_date - (case when f.kind in ('audio', 'video')
+             then public.setting_int('evict_window_days', 365) else public.setting_int('evict_window_days_docs', 548) end)::int),
          coalesce(f.last_opened_at, f.created_at),
          f.storage_path, f.storage_version
   from files f
-  where f.storage = 'b2' and not f.pinned
+  where f.storage = st and not f.pinned
     and f.created_at < now() - make_interval(days => public.setting_int('evict_grace_days', 14)::int)
+    and (f.imported_at is null or f.imported_at < now() - make_interval(days => public.setting_int('import_grace_days', 183)::int))
   order by 4 asc, 5 asc, f.id asc
 $$;
-revoke execute on function public.b2_eviction_order() from public, anon, authenticated;
+revoke execute on function public.storage_eviction_order(text) from public, anon, authenticated;
 
 -- Anteprima per gli amministratori: i prossimi file che verrebbero eliminati
-create or replace function public.b2_eviction_preview(lim integer default 5)
+create or replace function public.storage_eviction_preview(st text, lim integer default 5)
 returns table(file_id bigint, file_title text, bytes bigint, opens bigint, last_activity timestamptz)
 language plpgsql stable security definer set search_path = public as $$
 begin
   if not public.is_admin() then raise exception 'Operazione riservata agli amministratori'; end if;
   return query select e.file_id, e.file_title, e.bytes, e.opens, e.last_activity
-    from public.b2_eviction_order() e limit greatest(1, least(lim, 50));
+    from public.storage_eviction_order(st) e limit greatest(1, least(lim, 50));
 end $$;
+create or replace function public.b2_eviction_preview(lim integer default 5)
+returns table(file_id bigint, file_title text, bytes bigint, opens bigint, last_activity timestamptz)
+language sql stable security definer set search_path = public as $$
+  select * from public.storage_eviction_preview('b2', lim)
+$$;
 
--- Fa spazio per un nuovo caricamento eliminando SOLO il necessario.
--- Restituisce i file eliminati (la funzione "B2" li cancella poi da Backblaze).
-create or replace function public.b2_make_room(needed bigint)
+-- Fa spazio per un nuovo caricamento eliminando SOLO il necessario, e solo dallo stesso archivio.
+-- Restituisce i file eliminati (la funzione "B2" li cancella poi dall'archivio).
+create or replace function public.storage_make_room(st text, needed bigint)
 returns table(file_id bigint, path text, version text, bytes bigint, file_title text)
 language plpgsql security definer set search_path = public as $$
 declare
@@ -401,10 +484,10 @@ declare
   v_avail   bigint;
 begin
   if not public.is_campus() then raise exception 'Accesso negato'; end if;
-  v_deficit := (select coalesce(sum(size), 0) from files where storage = 'b2') + v_needed
-               - public.setting_int('b2_quota_bytes', 10200547328);
+  if st not in ('b2', 'r2') then raise exception 'Archivio non valido'; end if;
+  v_deficit := public.storage_used(st) + v_needed - public.storage_quota(st);
   if v_deficit <= 0 then return; end if;
-  select coalesce(sum(e.bytes), 0) into v_avail from public.b2_eviction_order() e;
+  select coalesce(sum(e.bytes), 0) into v_avail from public.storage_eviction_order(st) e;
   if v_avail < v_deficit then
     raise exception 'Spazio dell''archivio esaurito: non ci sono abbastanza file vecchi o poco usati da eliminare.';
   end if;
@@ -413,7 +496,7 @@ begin
     with ranked as (
       select e.file_id, e.bytes,
              sum(e.bytes) over (order by e.opens, e.last_activity, e.file_id) as running
-      from public.b2_eviction_order() e
+      from public.storage_eviction_order(st) e
     ), deleted as (
       delete from files f using ranked r
       where f.id = r.file_id and r.running - r.bytes < v_deficit
@@ -422,6 +505,11 @@ begin
     select * from deleted;
   perform set_config('app.auto_evict', '', true);
 end $$;
+create or replace function public.b2_make_room(needed bigint)
+returns table(file_id bigint, path text, version text, bytes bigint, file_title text)
+language sql security definer set search_path = public as $$
+  select * from public.storage_make_room('b2', needed)
+$$;
 
 -- Protegge un file dall'eliminazione automatica (solo amministratori)
 create or replace function public.set_pinned(fid bigint, value boolean)
@@ -440,6 +528,9 @@ end $$;
 create or replace function public.award_points()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
+  if coalesce(current_setting('app.importing', true), '') = '1' or coalesce(current_setting('app.robot', true), '') = '1' then
+    return null;  -- importazione e robot: punti gestiti a parte (import_register)
+  end if;
   if tg_op = 'INSERT' and new.uploaded_by is not null then
     update profiles set upload_count = upload_count + 1,
       points = points + case when (select count(*) from files
@@ -516,6 +607,227 @@ begin
   insert into audit_log (user_id, action, details) values (auth.uid(), 'utente_riattivato', v_email);
 end $$;
 
+-- =============================================================================
+--  Importazione dal vecchio Google Drive e robot di compressione
+--  Lo script Google e il robot di GitHub non hanno un account: si identificano con un
+--  "codice di servizio" generato da un amministratore (qui ne resta solo l'impronta).
+-- =============================================================================
+
+-- Anno accademico in forma "2024/2025" (come nel sito: accetta "2024-25", "24/25", "2024"…)
+create or replace function public.norm_aa(v text)
+returns text language plpgsql immutable as $$
+declare m text[]; y int;
+begin
+  m := regexp_match(coalesce(v, ''), '(\d{4}|\d{2})\s*[/\-–]\s*(\d{4}|\d{2})');
+  if m is not null then y := m[1]::int;
+  else
+    m := regexp_match(coalesce(v, ''), '(?:^|\D)(\d{4})(?:\D|$)');
+    if m is null then return null; end if;
+    y := m[1]::int;
+  end if;
+  if y < 100 then y := y + 2000; end if;
+  if y < 1990 or y > 2100 then return null; end if;
+  return y || '/' || (y + 1);
+end $$;
+
+create or replace function public.service_ok(token text)
+returns boolean language sql stable security definer set search_path = public as $$
+  select length(coalesce(token, '')) >= 32 and exists (
+    select 1 from app_settings where key = 'service_token_hash'
+      and value = encode(sha256(convert_to(token, 'UTF8')), 'hex'))
+$$;
+revoke execute on function public.service_ok(text) from public, anon, authenticated;
+
+create or replace function public.require_service(token text)
+returns void language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public.service_ok(token) then raise exception 'Codice di servizio non valido'; end if;
+end $$;
+revoke execute on function public.require_service(text) from public, anon, authenticated;
+
+-- Verifica del codice (usata dalla funzione "B2" per le azioni di importazione)
+create or replace function public.service_ping(token text)
+returns boolean language sql stable security definer set search_path = public as $$
+  select public.service_ok(token)
+$$;
+
+-- Nuovo codice di servizio (solo amministratori). Il vecchio smette di funzionare.
+create or replace function public.new_service_token()
+returns text language plpgsql volatile security definer set search_path = public as $$
+declare t text := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
+begin
+  if not public.is_admin() then raise exception 'Operazione riservata agli amministratori'; end if;
+  insert into app_settings (key, value) values ('service_token_hash', encode(sha256(convert_to(t, 'UTF8')), 'hex'))
+  on conflict (key) do update set value = excluded.value;
+  insert into audit_log (user_id, action) values (auth.uid(), 'codice_servizio_generato');
+  return t;
+end $$;
+
+-- Controllo prima di trasferire un file: 'ok', 'exists' (già importato), 'full' (aspettare la compressione), 'too_big'
+create or replace function public.import_prepare(token text, p_drive_id text, p_store text, p_size bigint)
+returns text language plpgsql stable security definer set search_path = public as $$
+begin
+  perform public.require_service(token);
+  if p_store not in ('b2', 'r2') then raise exception 'Archivio non valido'; end if;
+  if exists (select 1 from files where drive_id = p_drive_id) then return 'exists'; end if;
+  if coalesce(p_size, 0) > public.setting_int('import_max_mb', 3000) * 1048576 then return 'too_big'; end if;
+  if public.storage_used(p_store) + coalesce(p_size, 0) > public.storage_quota(p_store) then return 'full'; end if;
+  return 'ok';
+end $$;
+
+-- Registra un file importato: crea il corso se serve, attribuisce file e punti all'autore
+-- (subito se è già iscritto, altrimenti al suo primo accesso).
+create or replace function public.import_register(token text, p jsonb)
+returns bigint language plpgsql volatile security definer set search_path = public as $$
+declare
+  v_id     bigint;
+  v_course bigint;
+  v_aa     text := public.norm_aa(p ->> 'aa');
+  v_degree text := p ->> 'degree';
+  v_year   int  := nullif(p ->> 'study_year', '')::int;
+  v_email  text := lower(nullif(trim(p ->> 'owner'), ''));
+  v_user   uuid;
+  v_per    int  := public.setting_int('import_points_per_file', 10);
+  v_cap    int  := public.setting_int('import_points_cap', 300);
+  v_files  int;
+  v_delta  int;
+begin
+  perform public.require_service(token);
+  select id into v_id from files where drive_id = p ->> 'drive_id';
+  if v_id is not null then return v_id; end if;
+
+  if not (v_degree = 'triennale' and v_year between 1 and 3 or v_degree = 'magistrale' and v_year between 1 and 2) then
+    v_degree := null; v_year := null;   -- "Da assegnare"
+  end if;
+  select id into v_course from courses
+  where lower(name) = lower(p ->> 'course') and coalesce(public.norm_aa(year), '') = coalesce(v_aa, '')
+  order by id limit 1;
+  if v_course is null then
+    insert into courses (name, year, degree, study_year, description)
+    values (left(p ->> 'course', 140), v_aa, v_degree, v_year, 'Materiali importati dal vecchio Drive dei rappresentanti.')
+    returning id into v_course;
+  end if;
+
+  if v_email is not null then select id into v_user from profiles where email = v_email; end if;
+  perform set_config('app.importing', '1', true);
+  insert into files (course_id, title, description, original_name, storage_path, storage, storage_version,
+                     mime, kind, size, uploaded_by, created_at, imported_at, drive_id, needs_processing)
+  values (v_course, left(coalesce(nullif(p ->> 'title', ''), p ->> 'name'), 200), left(nullif(p ->> 'description', ''), 2000),
+          left(p ->> 'name', 255), p ->> 'path', p ->> 'store', nullif(p ->> 'version', ''),
+          p ->> 'mime', p ->> 'kind', (p ->> 'size')::bigint, v_user,
+          coalesce((p ->> 'created')::timestamptz, now()), now(), p ->> 'drive_id',
+          coalesce((p ->> 'needs_processing')::boolean, false))
+  returning id into v_id;
+  perform set_config('app.importing', '', true);
+
+  if v_email is not null then
+    insert into import_credits (email, files) values (v_email, 1)
+    on conflict (email) do update set files = import_credits.files + 1
+    returning files into v_files;
+    v_delta := least(v_files * v_per, v_cap) - (select points from import_credits where email = v_email);
+    update import_credits set points = points + v_delta where email = v_email;
+    if v_user is not null then
+      update profiles set points = points + v_delta, upload_count = upload_count + 1 where id = v_user;
+      update import_credits set paid = paid + v_delta where email = v_email;
+    else
+      insert into import_pending (file_id, email) values (v_id, v_email);
+    end if;
+  end if;
+  return v_id;
+end $$;
+
+-- Robot: registrazioni da comprimere (o ZIP da scompattare)
+create or replace function public.robot_pending(token text, lim integer default 50)
+returns table(id bigint, storage text, storage_path text, storage_version text, kind text, mime text, original_name text, size bigint)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  perform public.require_service(token);
+  return query select f.id, f.storage, f.storage_path, f.storage_version, f.kind, f.mime, f.original_name, f.size
+    from files f where f.needs_processing order by f.id limit greatest(1, least(lim, 500));
+end $$;
+
+-- Robot: file compresso al posto dell'originale (false se nel frattempo è stato eliminato)
+create or replace function public.robot_done(token text, p_id bigint, p_path text, p_version text, p_size bigint, p_mime text, p_name text)
+returns boolean language plpgsql volatile security definer set search_path = public as $$
+begin
+  perform public.require_service(token);
+  update files set storage_path = p_path, storage_version = nullif(p_version, ''), size = p_size,
+    mime = p_mime, original_name = left(p_name, 255), needs_processing = false, processing_error = null
+  where id = p_id and needs_processing;
+  return found;
+end $$;
+
+create or replace function public.robot_failed(token text, p_id bigint, msg text)
+returns void language plpgsql volatile security definer set search_path = public as $$
+begin
+  perform public.require_service(token);
+  update files set needs_processing = false, processing_error = left(coalesce(msg, 'errore'), 300) where id = p_id;
+end $$;
+
+-- Robot: una lezione estratta da uno ZIP (stesso corso, autore e date dell'archivio, nessun punto extra).
+-- Ogni lezione è riconosciuta dal suo nome nello ZIP: se il robot viene interrotto, riprende senza doppioni.
+create or replace function public.robot_add(token text, parent_id bigint, p jsonb)
+returns bigint language plpgsql volatile security definer set search_path = public as $$
+declare v_id bigint; f files; v_drive text;
+begin
+  perform public.require_service(token);
+  select * into f from files where id = parent_id;
+  if f.id is null then raise exception 'Archivio non trovato'; end if;
+  v_drive := coalesce(f.drive_id, 'file' || f.id) || '#' || coalesce(p ->> 'member', p ->> 'name');
+  select id into v_id from files where drive_id = v_drive;
+  if v_id is not null then return v_id; end if;
+  perform set_config('app.importing', '1', true);
+  perform set_config('app.robot', '1', true);
+  insert into files (course_id, title, description, original_name, storage_path, storage, storage_version,
+                     mime, kind, size, uploaded_by, created_at, imported_at, drive_id, needs_processing)
+  values (f.course_id, left(coalesce(nullif(p ->> 'title', ''), p ->> 'name'), 200), f.description,
+          left(p ->> 'name', 255), p ->> 'path', f.storage, nullif(p ->> 'version', ''),
+          p ->> 'mime', p ->> 'kind', (p ->> 'size')::bigint, f.uploaded_by, f.created_at, f.imported_at, v_drive, false)
+  returning id into v_id;
+  insert into import_pending (file_id, email) select v_id, email from import_pending where file_id = parent_id;
+  perform set_config('app.importing', '', true);
+  perform set_config('app.robot', '', true);
+  return v_id;
+end $$;
+
+-- Robot: lezioni di uno ZIP già estratte (per riprendere dopo un'interruzione)
+create or replace function public.robot_extracted(token text, parent_id bigint)
+returns setof text language plpgsql stable security definer set search_path = public as $$
+declare v_prefix text;
+begin
+  perform public.require_service(token);
+  select coalesce(drive_id, 'file' || id) || '#' into v_prefix from files where id = parent_id;
+  return query select substr(drive_id, length(v_prefix) + 1) from files where drive_id like replace(replace(v_prefix, '%', '\%'), '_', '\_') || '%';
+end $$;
+
+-- Robot: rimuove l'archivio ZIP dopo averlo scompattato (senza togliere punti)
+create or replace function public.robot_remove(token text, p_id bigint)
+returns void language plpgsql volatile security definer set search_path = public as $$
+begin
+  perform public.require_service(token);
+  perform set_config('app.robot', '1', true);
+  delete from files where id = p_id;   -- lo ZIP conta comunque come un caricamento per i punti
+  perform set_config('app.robot', '', true);
+end $$;
+
+-- Stato dell'importazione per la pagina Amministrazione
+create or replace function public.import_status()
+returns json language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception 'Operazione riservata agli amministratori'; end if;
+  return json_build_object(
+    'has_token', exists (select 1 from app_settings where key = 'service_token_hash'),
+    'imported', (select count(*) from files where imported_at is not null),
+    'imported_b2', (select count(*) from files where imported_at is not null and storage = 'b2'),
+    'imported_r2', (select count(*) from files where imported_at is not null and storage = 'r2'),
+    'processing', (select count(*) from files where needs_processing),
+    'authors', (select count(*) from import_credits),
+    'authors_waiting', (select count(distinct email) from import_pending),
+    'errors', (select coalesce(json_agg(json_build_object('id', id, 'title', title, 'error', processing_error) order by id), '[]'::json)
+               from (select id, title, processing_error from files where processing_error is not null order by id limit 20) e),
+    'last', (select max(imported_at) from files));
+end $$;
+
 -- Contenuti iniziali della pagina Rappresentanti (solo informazioni pubbliche, una volta sola)
 do $$ begin
   if not exists (select 1 from app_settings where key = 'info_seeded') then
@@ -543,12 +855,14 @@ alter table public.files     enable row level security;
 alter table public.audit_log enable row level security;
 alter table public.file_opens enable row level security;
 alter table public.course_visits enable row level security;
+alter table public.import_pending enable row level security;
+alter table public.import_credits enable row level security;
 alter table public.app_settings enable row level security;
 alter table public.reports enable row level security;
 alter table public.representatives enable row level security;
 alter table public.info_links enable row level security;
 alter table public.professors enable row level security;
-revoke all on public.file_opens, public.app_settings, public.course_visits from anon, authenticated;
+revoke all on public.file_opens, public.app_settings, public.course_visits, public.import_pending, public.import_credits from anon, authenticated;
 
 drop policy if exists "profili visibili agli studenti" on public.profiles;
 create policy "profili visibili agli studenti" on public.profiles

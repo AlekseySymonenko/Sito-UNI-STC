@@ -1,16 +1,21 @@
 // =============================================================================
-//  Funzione "b2" — archivio file su Backblaze B2 per Appunti per STC
+//  Funzione "B2" — archivio file per Appunti per STC
+//    • Backblaze B2: documenti (PDF, appunti, foto…)
+//    • Cloudflare R2: registrazioni audio e video (facoltativo; senza, tutto va su B2)
 //
-//  COME INSTALLARLA: Supabase → Edge Functions → Deploy a new function →
-//  Via Editor → nome "b2" → incolla TUTTO questo file → Deploy.
-//  Poi in Edge Functions → Secrets aggiungi:
+//  COME INSTALLARLA: Supabase → Edge Functions → funzione "B2" → Code →
+//  incolla TUTTO questo file → Deploy.
+//  Secrets (Edge Functions → Secrets):
 //    B2_KEY_ID, B2_APP_KEY, B2_BUCKET, B2_ENDPOINT  (es. s3.eu-central-003.backblazeb2.com)
+//    R2_ACCOUNT_ID, R2_KEY_ID, R2_APP_KEY, R2_BUCKET (Cloudflare; R2_ENDPOINT solo se diverso dal solito)
 //    ALLOWED_ORIGIN (facoltativo)
-//  Il limite di spazio (9,5 GB) è nel database: tabella app_settings, chiave b2_quota_bytes.
+//  I limiti di spazio (9,5 GB ciascuno) sono nel database: tabella app_settings.
 //
 //  Cosa fa: verifica chi chiama (solo account @campus.unimib.it), poi rilascia
-//  link temporanei firmati per caricare/scaricare i file su B2. Le chiavi di B2
+//  link temporanei firmati per caricare/scaricare i file. Le chiavi degli archivi
 //  restano qui, sul server: il browser non le vede mai.
+//  Le azioni "import-…" servono allo script che trasferisce il vecchio Google Drive:
+//  non hanno un account, si identificano con il codice di servizio generato in Amministrazione.
 // =============================================================================
 
 const ALLOWED_DOMAIN = 'campus.unimib.it';
@@ -37,6 +42,7 @@ const TYPES: Record<string, [string, string]> = {
   ods: ['application/vnd.oasis.opendocument.spreadsheet', 'document'],
   txt: ['text/plain; charset=utf-8', 'document'], md: ['text/plain; charset=utf-8', 'document'],
   zip: ['application/zip', 'other'],
+  cif: ['application/octet-stream', 'other'], mryx: ['application/octet-stream', 'other'],
 };
 
 export function typeFor(name: string) {
@@ -95,18 +101,41 @@ function env(name: string, fallback = '') {
   const g = globalThis as any;
   return (g.Deno ? g.Deno.env.get(name) : g.process?.env?.[name]) || fallback;
 }
-function b2Config() {
-  const host = env('B2_ENDPOINT').replace(/^https?:\/\//, '').replace(/\/$/, '');
+type Store = 'b2' | 'r2';
+type B2 = { name: Store; host: string; region: string; bucket: string; accessKey: string; secretKey: string };
+const cleanHost = (h: string) => h.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+
+function b2Config(): B2 {
+  const host = cleanHost(env('B2_ENDPOINT'));
   const region = (/^s3\.([a-z0-9-]+)\.backblazeb2\.com$/.exec(host) || [])[1] || env('B2_REGION');
-  const cfg = {
-    host, region, bucket: env('B2_BUCKET'), accessKey: env('B2_KEY_ID'), secretKey: env('B2_APP_KEY'),
+  const cfg: B2 = {
+    name: 'b2', host, region, bucket: env('B2_BUCKET'), accessKey: env('B2_KEY_ID'), secretKey: env('B2_APP_KEY'),
   };
   if (!cfg.host || !cfg.region || !cfg.bucket || !cfg.accessKey || !cfg.secretKey) {
     throw new HttpError(500, 'Archivio B2 non configurato: mancano dei Secrets nella funzione.');
   }
   return cfg;
 }
-type B2 = ReturnType<typeof b2Config>;
+// Cloudflare R2 (compatibile S3, regione "auto"). null se non configurato.
+function r2Config(): B2 | null {
+  const account = env('R2_ACCOUNT_ID').trim();
+  const host = cleanHost(env('R2_ENDPOINT')) || (account ? `${account}.r2.cloudflarestorage.com` : '');
+  const cfg: B2 = {
+    name: 'r2', host, region: 'auto', bucket: env('R2_BUCKET'), accessKey: env('R2_KEY_ID'), secretKey: env('R2_APP_KEY'),
+  };
+  return cfg.host && cfg.bucket && cfg.accessKey && cfg.secretKey ? cfg : null;
+}
+function storeConfig(name: unknown): B2 {
+  if (name === 'r2') {
+    const r2 = r2Config();
+    if (!r2) throw new HttpError(500, 'Archivio Cloudflare R2 non configurato: mancano dei Secrets nella funzione.');
+    return r2;
+  }
+  return b2Config();
+}
+// Le registrazioni vanno su Cloudflare R2 (download gratuiti illimitati), il resto su B2
+const isRecording = (kind: string) => kind === 'audio' || kind === 'video';
+const storeFor = (kind: string): Store => (isRecording(kind) && r2Config() ? 'r2' : 'b2');
 
 class HttpError extends Error {
   status: number;
@@ -116,11 +145,12 @@ class HttpError extends Error {
 // ---- Supabase (con il token dell'utente: valgono le regole del database) ------------
 function sbFetch(req: Request, path: string, init: RequestInit = {}) {
   const apikey = env('SUPABASE_ANON_KEY') || req.headers.get('apikey') || '';
+  const auth = req.headers.get('Authorization');
   return fetch(env('SUPABASE_URL') + path, {
     ...init,
     headers: {
       apikey,
-      Authorization: req.headers.get('Authorization') || '',
+      ...(auth ? { Authorization: auth } : {}),
       'Content-Type': 'application/json',
       ...(init.headers || {}),
     },
@@ -147,11 +177,15 @@ async function currentUser(req: Request) {
 const rpc = (req: Request, name: string, args: Record<string, unknown> = {}) =>
   sbJson(req, '/rest/v1/rpc/' + name, { method: 'POST', body: JSON.stringify(args) });
 
-async function usedBytes(req: Request) {
-  return Number(await rpc(req, 'b2_used_bytes')) || 0;
-}
-async function quotaBytes(req: Request) {
-  return Number(await rpc(req, 'b2_quota_bytes')) || Math.round(9.5 * 1024 ** 3);
+async function usage(req: Request, store: Store) {
+  if (store === 'b2') {
+    return {
+      used: Number(await rpc(req, 'b2_used_bytes')) || 0,
+      quota: Number(await rpc(req, 'b2_quota_bytes')) || Math.round(9.5 * 1024 ** 3),
+    };
+  }
+  const u = await rpc(req, 'storage_usage', { st: store });
+  return { used: Number(u?.used) || 0, quota: Number(u?.quota) || Math.round(9.5 * 1024 ** 3) };
 }
 
 async function getFile(req: Request, id: unknown) {
@@ -216,31 +250,137 @@ async function ensureCors(b2: B2, origin: string) {
   corsReady = true;
 }
 
-// Se il nuovo file non ci sta, elimina i file meno usati (regole nel database:
-// b2_make_room) e li cancella da B2. Restituisce i titoli dei file rimossi.
+// Se il nuovo file non ci sta, elimina i file meno usati dello stesso archivio (regole
+// nel database: storage_make_room) e li cancella. Restituisce i titoli dei file rimossi.
 async function makeRoom(req: Request, b2: B2, size: number) {
-  if ((await usedBytes(req)) + size <= (await quotaBytes(req))) return [];
+  const u = await usage(req, b2.name);
+  if (u.used + size <= u.quota) return [];
   let removed: { path: string; version: string | null; file_title: string }[];
   try {
-    removed = await rpc(req, 'b2_make_room', { needed: size });
+    removed = b2.name === 'b2'
+      ? await rpc(req, 'b2_make_room', { needed: size })
+      : await rpc(req, 'storage_make_room', { st: b2.name, needed: size });
   } catch (err) {
     throw new HttpError(507, err instanceof Error ? err.message : 'Spazio dell\'archivio esaurito.');
   }
   for (const r of removed) {
-    try { await b2Delete(b2, r.path, r.version); } catch (err) { console.error('Pulizia B2', r.path, err); }
+    try { await b2Delete(b2, r.path, r.version); } catch (err) { console.error('Pulizia', b2.name, r.path, err); }
   }
   return removed.map((r) => r.file_title);
 }
 
+// ---- Importazione dal vecchio Google Drive (script Google, codice di servizio) ----------------
+const PART_SIZE = 32 * 1024 * 1024;  // parti da 32 MB (uguali per tutte: lo richiede R2)
+const BIG_ZIP = 100 * 1024 * 1024;   // ZIP più grandi: registrazioni da scompattare (robot)
+const xmlValue = (xml: string, tag: string) => (new RegExp(`<${tag}>([^<]*)</${tag}>`).exec(xml) || [])[1] || '';
+const validImportKey = (key: unknown) => typeof key === 'string' && /^import\/[0-9a-f-]{36}\.[a-z0-9]+$/.test(key);
+
+async function serviceCheck(req: Request, token: unknown) {
+  const ok = await rpc(req, 'service_ping', { token: String(token || '') }).catch(() => false);
+  if (ok !== true) throw new HttpError(403, 'Codice di servizio non valido: generane uno nuovo in Amministrazione.');
+}
+
+async function handleImport(req: Request, body: Record<string, unknown>) {
+  const token = String(body.token || '');
+  await serviceCheck(req, token);
+
+  switch (body.action) {
+    case 'import-begin': {
+      const name = String(body.name || '');
+      const size = Number(body.size);
+      const t = typeFor(name);
+      if (!t) return { status: 'unsupported' };
+      if (!(size >= 0)) throw new HttpError(400, 'Dimensione non valida.');
+      const store: Store = (isRecording(t.kind) || (t.ext === 'zip' && size > BIG_ZIP)) && r2Config() ? 'r2' : 'b2';
+      const status = await rpc(req, 'import_prepare', { token, p_drive_id: String(body.driveId || ''), p_store: store, p_size: size });
+      if (status !== 'ok') return { status, store };
+      const cfg = storeConfig(store);
+      const key = `import/${crypto.randomUUID()}.${t.ext}`;
+      if (size <= PART_SIZE) return { status, store, key, url: await sign(cfg, 'PUT', key, 3600) };
+      const res = await fetch(await sign(cfg, 'POST', key, 300, { uploads: '' }), { method: 'POST' });
+      const uploadId = xmlValue(await res.text(), 'UploadId');
+      if (!res.ok || !uploadId) throw new HttpError(502, 'Avvio del caricamento a parti non riuscito (' + res.status + ').');
+      return { status, store, key, uploadId, partSize: PART_SIZE };
+    }
+
+    case 'import-part': {
+      if (!validImportKey(body.key) || !body.uploadId) throw new HttpError(400, 'Caricamento non valido.');
+      const part = Number(body.part);
+      if (!Number.isInteger(part) || part < 1 || part > 10000) throw new HttpError(400, 'Parte non valida.');
+      const cfg = storeConfig(body.store);
+      return { url: await sign(cfg, 'PUT', String(body.key), 3600, { partNumber: String(part), uploadId: String(body.uploadId) }) };
+    }
+
+    case 'import-finish': {
+      if (!validImportKey(body.key)) throw new HttpError(400, 'Caricamento non valido.');
+      const key = String(body.key);
+      const cfg = storeConfig(body.store);
+      const name = String(body.name || '').slice(0, 255);
+      const t = typeFor(name);
+      if (!t || t.ext !== typeFor(key)?.ext) throw new HttpError(400, 'Dati del file non validi.');
+      if (body.uploadId) {
+        const parts = (Array.isArray(body.parts) ? body.parts : []) as { n: number; etag: string }[];
+        if (!parts.length) throw new HttpError(400, 'Nessuna parte caricata.');
+        const xml = '<CompleteMultipartUpload>' + parts.map((p) =>
+          `<Part><PartNumber>${Number(p.n)}</PartNumber><ETag>${String(p.etag).replace(/[<>&]/g, '')}</ETag></Part>`).join('') +
+          '</CompleteMultipartUpload>';
+        const res = await fetch(await sign(cfg, 'POST', key, 300, { uploadId: String(body.uploadId) }), {
+          method: 'POST', body: xml, headers: { 'Content-Type': 'application/xml' },
+        });
+        const text = await res.text();
+        if (!res.ok || text.includes('<Error>')) throw new HttpError(502, 'Unione delle parti non riuscita: ' + (xmlValue(text, 'Message') || res.status));
+      }
+      const head = await fetch(await sign(cfg, 'HEAD', key, 300), { method: 'HEAD' });
+      if (!head.ok) throw new HttpError(400, 'Il file non risulta caricato.');
+      const size = Number(head.headers.get('content-length')) || 0;
+      const version = head.headers.get('x-amz-version-id') || '';
+      const clean = (v: unknown, max: number) => String(v ?? '').trim().slice(0, max);
+      try {
+        const id = await rpc(req, 'import_register', {
+          token,
+          p: {
+            drive_id: clean(body.driveId, 200), store: cfg.name, path: key, version, size, name,
+            title: clean(body.title, 200), description: clean(body.description, 2000),
+            kind: t.kind, mime: t.mime.split(';')[0], created: body.created || null, owner: clean(body.owner, 200),
+            course: clean(body.course, 140), degree: body.degree || null, study_year: body.studyYear || null, aa: clean(body.aa, 30),
+            needs_processing: cfg.name === 'r2',
+          },
+        });
+        return { id, store: cfg.name };
+      } catch (err) {
+        await b2Delete(cfg, key, version);
+        throw err;
+      }
+    }
+
+    case 'import-abort': {
+      if (!validImportKey(body.key)) throw new HttpError(400, 'Caricamento non valido.');
+      const cfg = storeConfig(body.store);
+      if (body.uploadId) {
+        await fetch(await sign(cfg, 'DELETE', String(body.key), 300, { uploadId: String(body.uploadId) }), { method: 'DELETE' });
+      } else {
+        await b2Delete(cfg, String(body.key));
+      }
+      return { ok: true };
+    }
+
+    default:
+      throw new HttpError(400, 'Azione sconosciuta.');
+  }
+}
+
 // ---- Azioni ----------------------------------------------------------------------------------
 async function handle(req: Request, body: Record<string, unknown>) {
+  if (typeof body.action === 'string' && body.action.startsWith('import-')) return handleImport(req, body);
   const user = await currentUser(req);
-  const b2 = b2Config();
   const isAdmin = user.role === 'admin';
 
   switch (body.action) {
-    case 'usage':
-      return { used: await usedBytes(req), quota: await quotaBytes(req), maxFileMb: MAX_FILE_MB };
+    case 'usage': {
+      const b2 = await usage(req, 'b2');
+      const r2 = r2Config() ? await usage(req, 'r2').catch(() => null) : null;
+      return { used: b2.used, quota: b2.quota, maxFileMb: MAX_FILE_MB, b2, r2 };
+    }
 
     case 'upload': {
       const name = String(body.name || '');
@@ -248,11 +388,12 @@ async function handle(req: Request, body: Record<string, unknown>) {
       const t = typeFor(name);
       if (!t) throw new HttpError(400, 'Formato non ammesso: ' + name);
       if (!(size > 0) || size > MAX_FILE_MB * 1024 * 1024) throw new HttpError(400, 'Il file supera il limite di ' + MAX_FILE_MB + ' MB.');
+      const b2 = storeConfig(storeFor(t.kind));
       const origin = env('ALLOWED_ORIGIN') || req.headers.get('Origin') || '';
-      if (origin) await ensureCors(b2, origin);
+      if (origin && b2.name === 'b2') await ensureCors(b2, origin); // su R2 il CORS si imposta dal pannello Cloudflare
       const evicted = await makeRoom(req, b2, size);
       const key = `${user.id}/${crypto.randomUUID()}.${t.ext}`;
-      return { key, url: await sign(b2, 'PUT', key, 900), contentType: t.mime, evicted };
+      return { key, url: await sign(b2, 'PUT', key, 900), contentType: t.mime, evicted, store: b2.name };
     }
 
     case 'confirm': {
@@ -262,6 +403,7 @@ async function handle(req: Request, body: Record<string, unknown>) {
       const t = typeFor(key);
       const name = String(body.name || '').slice(0, 255);
       if (!t || !name || typeFor(name)?.ext !== t.ext) throw new HttpError(400, 'Dati del file non validi.');
+      const b2 = storeConfig(body.store === 'r2' && storeFor(t.kind) === 'r2' ? 'r2' : 'b2');
       const head = await fetch(await sign(b2, 'HEAD', key, 300), { method: 'HEAD' });
       if (!head.ok) throw new HttpError(400, 'Il file non risulta caricato. Riprova.');
       const size = Number(head.headers.get('content-length')) || 0;
@@ -287,7 +429,7 @@ async function handle(req: Request, body: Record<string, unknown>) {
             description: clean(body.description, 2000) || null,
             original_name: name,
             storage_path: key,
-            storage: 'b2',
+            storage: b2.name,
             storage_version: version,
             mime: t.mime.split(';')[0],
             kind: t.kind,
@@ -304,7 +446,8 @@ async function handle(req: Request, body: Record<string, unknown>) {
     case 'url': {
       // Link temporaneo per vedere o scaricare (solo per chi può leggere il file: RLS).
       const f = await getFile(req, body.id);
-      if (f.storage !== 'b2') throw new HttpError(400, 'Il file non è su B2.');
+      if (f.storage !== 'b2' && f.storage !== 'r2') throw new HttpError(400, 'Il file non è su B2 né su R2.');
+      const b2 = storeConfig(f.storage);
       if (body.count) await rpc(req, 'record_file_open', { fid: f.id }).catch(() => null);
       const t = typeFor(f.storage_path);
       const name = String(f.original_name);
@@ -320,7 +463,7 @@ async function handle(req: Request, body: Record<string, unknown>) {
     case 'delete': {
       if (!isAdmin) throw new HttpError(403, 'Solo gli amministratori possono eliminare i file.');
       const f = await getFile(req, body.id);
-      if (f.storage === 'b2') await b2Delete(b2, f.storage_path, f.storage_version);
+      if (f.storage === 'b2' || f.storage === 'r2') await b2Delete(storeConfig(f.storage), f.storage_path, f.storage_version);
       await sbJson(req, `/rest/v1/files?id=eq.${f.id}`, { method: 'DELETE' });
       return { ok: true };
     }
@@ -329,8 +472,8 @@ async function handle(req: Request, body: Record<string, unknown>) {
       if (!isAdmin) throw new HttpError(403, 'Solo gli amministratori possono eliminare i corsi.');
       const courseId = Number(body.courseId);
       if (!Number.isInteger(courseId)) throw new HttpError(400, 'Corso non valido.');
-      const rows = await sbJson(req, `/rest/v1/files?select=storage_path,storage_version&storage=eq.b2&course_id=eq.${courseId}`);
-      for (const r of rows) await b2Delete(b2, r.storage_path, r.storage_version);
+      const rows = await sbJson(req, `/rest/v1/files?select=storage,storage_path,storage_version&storage=in.(b2,r2)&course_id=eq.${courseId}`);
+      for (const r of rows) await b2Delete(storeConfig(r.storage), r.storage_path, r.storage_version);
       return { deleted: rows.length };
     }
 

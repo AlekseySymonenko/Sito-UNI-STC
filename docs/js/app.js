@@ -4,7 +4,7 @@
 
   // Versione del sito: deve coincidere con data-v in index.html. Se Safari ha in
   // memoria una pagina principale vecchia, la ricarichiamo (una volta) aggirando la cache.
-  var VERSION = '20261017b';
+  var VERSION = '20261017c';
   if (document.documentElement.getAttribute('data-v') !== VERSION) {
     var tried = false;
     try { tried = sessionStorage.getItem('reload-v') === VERSION; sessionStorage.setItem('reload-v', VERSION); } catch (e) { /* ignora */ }
@@ -250,7 +250,7 @@
     var k = KINDS[f.kind] || KINDS.other;
     return '<li class="file-item">' +
       '<a class="file-thumb kind-' + f.kind + '" href="#/file/' + f.id + '" tabindex="-1" aria-hidden="true">' +
-        (f.kind === 'image' && f.storage !== 'b2' ? '<img alt="" data-thumb="' + f.id + '">' : icon(k.icon)) + '</a>' +
+        (f.kind === 'image' && f.storage === 'supabase' ? '<img alt="" data-thumb="' + f.id + '">' : icon(k.icon)) + '</a>' +
       '<div class="file-body">' +
         '<a class="file-title" href="#/file/' + f.id + '">' + esc(f.title) + '</a>' +
         '<div class="file-meta"><span class="tag kind-' + f.kind + '">' + k.label + '</span>' +
@@ -554,7 +554,7 @@
             '<button class="btn btn-primary btn-block" type="button" data-action="download" data-id="' + f.id + '">' + icon('download') + 'Scarica</button>' +
             (inline ? '<a class="btn btn-ghost btn-block" href="' + esc(url) + '" target="_blank" rel="noopener">Apri a schermo intero</a>' : '') +
             (f.uploaded_by !== state.user.id ? '<button class="btn btn-ghost btn-block btn-report" type="button" data-action="report" data-id="' + f.id + '">' + icon('flag') + 'Segnala contenuto inappropriato</button>' : '') +
-            (isAdmin() && f.storage === 'b2' ? '<button class="btn btn-ghost btn-block" type="button" data-action="toggle-pin" data-id="' + f.id + '" data-pinned="' + (f.pinned ? '1' : '') + '">' +
+            (isAdmin() && (f.storage === 'b2' || f.storage === 'r2') ? '<button class="btn btn-ghost btn-block" type="button" data-action="toggle-pin" data-id="' + f.id + '" data-pinned="' + (f.pinned ? '1' : '') + '">' +
               icon('shield') + (f.pinned ? 'Rimuovi protezione' : 'Proteggi dall\'eliminazione automatica') + '</button>' : '') +
             (isAdmin() ? '<button class="btn btn-danger btn-block" type="button" data-action="delete-file" data-id="' + f.id + '" data-back="#/corso/' + f.course_id + '">' + icon('trash') + 'Elimina materiale</button>' : '') +
           '</div></aside>' +
@@ -600,14 +600,17 @@
     ruolo_admin_assegnato: 'admin assegnato', ruolo_admin_revocato: 'admin revocato',
     file_eliminato_auto: 'eliminato in automatico', file_protetto: 'file protetto', file_non_protetto: 'protezione rimossa',
     utente_sospeso: 'utente sospeso', utente_riattivato: 'utente riattivato',
+    file_importato: 'importato dal Drive', archivio_scompattato: 'ZIP scompattato', codice_servizio_generato: 'codice di servizio',
   };
 
   async function adminPage(params) {
     if (!isAdmin()) return errorPage('Accesso negato', 'Questa sezione è riservata agli amministratori.');
     loading('admin');
     var res = await Promise.all([Api.stats(), Api.listUsers(), Api.listAudit(), Api.usage().catch(function () { return null; }),
-      Api.evictionPreview().catch(function () { return []; }), Api.listReports().catch(function () { return []; })]);
-    var stats = res[0], audit = res[2], usage = res[3], preview = res[4], reports = res[5];
+      Api.evictionPreview('b2').catch(function () { return []; }), Api.listReports().catch(function () { return []; }),
+      Api.importStatus().catch(function () { return null; })]);
+    var stats = res[0], audit = res[2], usage = res[3], preview = res[4], reports = res[5], imp = res[6];
+    var previewR2 = usage && usage.r2 ? await Api.evictionPreview('r2').catch(function () { return []; }) : [];
     var q = (params.get('q') || '').toLowerCase();
     var users = res[1].filter(function (u) { return !q || (u.name + ' ' + u.email).toLowerCase().indexOf(q) >= 0; })
       .sort(function (a, b) { return (a.role === 'admin' ? 0 : 1) - (b.role === 'admin' ? 0 : 1) || a.name.localeCompare(b.name); });
@@ -617,7 +620,8 @@
       '<section class="stats">' + stat('users', stats.users, 'Utenti') + stat('book', stats.courses, 'Corsi') +
         stat('folder', stats.files, 'Materiali') + stat('archive', bytes(stats.bytes), 'Spazio usato (totale)') + '</section>' +
       reportsPanel(reports) +
-      (usage ? usagePanel(usage, preview, stats) : '') +
+      (usage ? usagePanel(usage, preview, stats, previewR2) : '') +
+      (imp ? importPanel(imp) : '') +
       '<section class="panel"><div class="panel-head wrap"><h2>Utenti e ruoli</h2>' +
         '<form class="inline-search" data-form="filter-users">' + icon('search') + '<input type="search" name="q" value="' + esc(params.get('q') || '') + '" placeholder="Cerca per nome o email"></form></div>' +
         '<p class="muted small">Gli studenti compaiono qui dopo il loro primo accesso.</p>' +
@@ -678,26 +682,55 @@
       }).join('') + '</ul></section>';
   }
 
-  function usagePanel(u, preview, stats) {
-    var exact = u.quota ? Math.min(100, (u.used / u.quota) * 100) : 0;
+  // Barra di spazio di un archivio, con i prossimi file che verrebbero eliminati
+  function storageBlock(title, used, quota, preview, extra) {
+    var exact = quota ? Math.min(100, (used / quota) * 100) : 0;
     var pct = Math.round(exact);
-    var pctLabel = u.used > 0 && exact < 1 ? 'meno dell\'1%' : pct + '%';
-    var other = stats && u.where === 'Backblaze B2' ? (stats.bytes || 0) - (stats.b2_bytes || 0) : 0;
+    var pctLabel = used > 0 && exact < 1 ? 'meno dell\'1%' : pct + '%';
     var level = pct >= 90 ? 'high' : pct >= 70 ? 'mid' : 'low';
-    return '<section class="panel usage"><div class="panel-head"><h2>Spazio dell\'archivio</h2>' +
-      '<span class="muted small">' + esc(u.where) + '</span></div>' +
-      '<div class="usage-bar usage-' + level + '"><div data-width="' + (u.used > 0 ? Math.max(exact, 0.8).toFixed(2) : 0) + '"></div></div>' +
-      '<p class="small"><strong>' + bytes(u.used) + '</strong> usati di ' + bytes(u.quota) + ' (' + pctLabel + ').' +
-      (other > 0 ? ' Altri <strong>' + bytes(other) + '</strong> sono sull\'archivio di Supabase (file caricati prima di B2, limite 1 GB).' : '') + ' ' +
-      (u.where === 'Backblaze B2'
-        ? 'Quando lo spazio non basta per un nuovo file, vengono eliminati in automatico i file meno aperti nell\'ultimo anno ' +
-          '(mai quelli caricati da meno di 14 giorni o protetti 📌).'
-        : 'Quando lo spazio finisce, i caricamenti vengono bloccati: nessun costo.') + '</p>' +
-      (preview && preview.length ? '<h3 class="usage-sub">Primi file che verrebbero eliminati</h3><ol class="evict-list">' +
+    return '<h3 class="usage-sub">' + title + '</h3>' +
+      '<div class="usage-bar usage-' + level + '"><div data-width="' + (used > 0 ? Math.max(exact, 0.8).toFixed(2) : 0) + '"></div></div>' +
+      '<p class="small"><strong>' + bytes(used) + '</strong> usati di ' + bytes(quota) + ' (' + pctLabel + ').' + (extra || '') + '</p>' +
+      (preview && preview.length ? '<p class="muted small">Primi file che verrebbero eliminati:</p><ol class="evict-list">' +
         preview.map(function (p) {
           return '<li><a href="#/file/' + p.file_id + '">' + esc(p.file_title) + '</a><span class="muted small">' + bytes(p.bytes) + ' · ' +
             p.opens + ' apertur' + (Number(p.opens) === 1 ? 'a' : 'e') + ' · ultima attività ' + date(p.last_activity) + '</span></li>';
-        }).join('') + '</ol>' : '') +
+        }).join('') + '</ol>' : '');
+  }
+
+  function usagePanel(u, preview, stats, previewR2) {
+    var external = u.where === 'Backblaze B2';
+    var other = stats && external ? (stats.bytes || 0) - (stats.b2_bytes || 0) - (stats.r2_bytes || 0) : 0;
+    var html = '<section class="panel usage"><div class="panel-head"><h2>Spazio degli archivi</h2></div>';
+    if (!external) {
+      return html + storageBlock(esc(u.where), u.used, u.quota, preview, ' Quando lo spazio finisce, i caricamenti vengono bloccati: nessun costo.') + '</section>';
+    }
+    html += storageBlock(u.r2 ? 'Documenti · Backblaze B2' : 'Backblaze B2', u.used, u.quota, preview,
+      other > 0 ? ' Altri <strong>' + bytes(other) + '</strong> sono sull\'archivio di Supabase (file caricati prima di B2, limite 1 GB).' : '');
+    if (u.r2) html += storageBlock('Registrazioni audio e video · Cloudflare R2', u.r2.used, u.r2.quota, previewR2);
+    return html + '<p class="small muted">Quando un archivio è pieno e serve spazio per un nuovo file, vengono eliminati in automatico ' +
+      'solo i file meno aperti di quell\'archivio: per i documenti si contano le aperture dell\'ultimo anno e mezzo, ' +
+      'per le registrazioni dell\'ultimo anno. Mai eliminati i file caricati da meno di 14 giorni, quelli importati dal Drive ' +
+      'nei primi 6 mesi e quelli protetti 📌.</p></section>';
+  }
+
+  function importPanel(st) {
+    var n = function (v) { return Number(v) || 0; };
+    return '<section class="panel import"><div class="panel-head wrap"><h2>' + icon('upload') + 'Importazione dal vecchio Drive</h2>' +
+        '<button class="btn btn-ghost btn-sm" type="button" data-action="new-service-token">' + icon('lock') + (st.has_token ? 'Genera un nuovo codice' : 'Genera il codice di servizio') + '</button></div>' +
+      '<div data-token-box></div>' +
+      (n(st.imported) || n(st.processing)
+        ? '<ul class="import-stats">' +
+            '<li><strong>' + n(st.imported) + '</strong><small>file importati</small></li>' +
+            '<li><strong>' + n(st.imported_b2) + '</strong><small>documenti (Backblaze)</small></li>' +
+            '<li><strong>' + n(st.imported_r2) + '</strong><small>registrazioni (Cloudflare)</small></li>' +
+            '<li><strong>' + n(st.processing) + '</strong><small>in attesa di compressione</small></li>' +
+            '<li><strong>' + n(st.authors) + '</strong><small>autori (' + n(st.authors_waiting) + ' non ancora iscritti)</small></li>' +
+          '</ul>' + (st.last ? '<p class="muted small">Ultimo file importato: ' + dateTime(st.last) + '</p>' : '')
+        : '<p class="muted small">Nessun file importato finora. Il codice di servizio serve allo script Google che trasferisce il Drive ' +
+          'e al robot di GitHub che comprime le registrazioni.</p>') +
+      (st.errors && st.errors.length ? '<p class="small"><strong>File non elaborati:</strong></p><ul class="report-reasons">' +
+        st.errors.map(function (e) { return '<li><a href="#/file/' + e.id + '">' + esc(e.title) + '</a> <span class="muted small">— ' + esc(e.error) + '</span></li>'; }).join('') + '</ul>' : '') +
       '</section>';
   }
 
@@ -1047,6 +1080,27 @@
           }
           route();
         } catch (err) { el.disabled = false; fail(err); }
+        return;
+      }
+      case 'new-service-token': {
+        if (!confirm('Generare un nuovo codice di servizio? Il codice precedente smetterà di funzionare (script Google e robot vanno aggiornati).')) return;
+        el.disabled = true;
+        try {
+          var code = await Api.newServiceToken();
+          var box = document.querySelector('[data-token-box]');
+          box.innerHTML = '<div class="token-box"><p class="small"><strong>Codice di servizio</strong> — copialo ora: non verrà più mostrato. ' +
+            'Incollalo nello script Google (riga CODICE) e nei Secrets di GitHub (SERVICE_TOKEN). Non condividerlo con nessuno.</p>' +
+            '<input type="text" readonly value="' + esc(code) + '" data-token-value>' +
+            '<button class="btn btn-primary btn-sm" type="button" data-action="copy-token">' + icon('check') + 'Copia</button></div>';
+        } catch (err) { fail(err); }
+        el.disabled = false;
+        return;
+      }
+      case 'copy-token': {
+        var field = document.querySelector('[data-token-value]');
+        field.select();
+        try { await navigator.clipboard.writeText(field.value); toast('Codice copiato.'); }
+        catch (e) { document.execCommand('copy'); toast('Codice copiato.'); }
         return;
       }
       case 'unban': {

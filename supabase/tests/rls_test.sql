@@ -105,7 +105,7 @@ select pg_temp.expect((select open_count from files where title = 'Vecchio molto
 select pg_temp.expect((select file_title from b2_eviction_preview(1)) = 'Vecchio mai aperto', 'anteprima admin: primo candidato giusto');
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000b","email":"n.cognome@campus.unimib.it"}', false);
 select pg_temp.expect_error('select * from b2_eviction_preview(5)', 'anteprima riservata agli admin');
-select pg_temp.expect_error('select * from b2_eviction_order()', 'ordine di eliminazione non chiamabile direttamente');
+select pg_temp.expect_error($q$select * from storage_eviction_order('b2')$q$, 'ordine di eliminazione non chiamabile direttamente');
 select pg_temp.expect_error($q$select set_pinned((select id from files limit 1), true)$q$, 'solo admin proteggono i file');
 -- occupati 9.500 di 10.000: c'è spazio per 400 byte, nessuna eliminazione
 select pg_temp.expect((select count(*) from b2_make_room(400)) = 0, 'spazio sufficiente: nessuna eliminazione');
@@ -230,6 +230,134 @@ select pg_temp.expect((select count(*) from course_visits v join courses c on c.
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000a","email":"admin.uno@campus.unimib.it"}', false);
 delete from courses where name in ('Visita A', 'Visita B');
 select pg_temp.expect((select count(*) from course_visits) = 0, 'visite rimosse con il corso');
+
+-- ===== Importazione dal vecchio Drive, punti, archivio Cloudflare e robot =====
+set role authenticated;
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000b","email":"n.cognome@campus.unimib.it"}', false);
+select pg_temp.expect_error('select new_service_token()', 'solo gli admin generano il codice di servizio');
+select pg_temp.expect_error('select * from import_pending', 'studenti non leggono le email del Drive');
+select pg_temp.expect_error('select * from import_credits', 'studenti non leggono i crediti del Drive');
+select pg_temp.expect_error('select import_status()', 'stato importazione riservato agli admin');
+select pg_temp.expect((storage_usage('r2') ->> 'quota')::bigint = 10200547328, 'spazio Cloudflare visibile agli studenti');
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000a","email":"admin.uno@campus.unimib.it"}', false);
+select set_config('test.token', new_service_token(), false);
+select pg_temp.expect(length(current_setting('test.token')) = 64, 'codice di servizio generato');
+select pg_temp.expect((import_status() ->> 'has_token')::boolean, 'stato: codice presente');
+reset role;
+select set_config('test.pts', (select points || ',' || upload_count from profiles where email = 'n.cognome@campus.unimib.it'), false);
+select set_config('request.jwt.claims', '', false);
+set role anon;
+select pg_temp.expect_error($q$select import_prepare('sbagliato-sbagliato-sbagliato-sbagliato', 'd1', 'b2', 10)$q$, 'codice sbagliato rifiutato');
+select pg_temp.expect(import_prepare(current_setting('test.token'), 'd1', 'b2', 10) = 'ok', 'importazione: controllo preliminare');
+select pg_temp.expect(import_prepare(current_setting('test.token'), 'd1', 'r2', 4000 * 1048576::bigint) = 'too_big', 'file troppo grande segnalato');
+select import_register(current_setting('test.token'), jsonb_build_object(
+  'drive_id', 'd1', 'store', 'b2', 'path', 'import/d1.pdf', 'size', 1000, 'name', 'Appunti.pdf', 'title', 'Appunti',
+  'kind', 'pdf', 'mime', 'application/pdf', 'created', '2024-10-05T10:00:00Z', 'owner', 'N.Cognome@campus.unimib.it',
+  'course', 'Bioinorganica', 'degree', 'magistrale', 'study_year', 1, 'aa', '2024/2025', 'description', 'Cartella: Appunti'));
+select pg_temp.expect(import_prepare(current_setting('test.token'), 'd1', 'b2', 10) = 'exists', 'file già importato riconosciuto');
+select set_config('test.d1', import_register(current_setting('test.token'), '{"drive_id":"d1"}')::text, false);
+reset role;
+select pg_temp.expect(current_setting('test.d1')::bigint = (select id from files where drive_id = 'd1'), 'reimportare non crea doppioni');
+select pg_temp.expect((select count(*) from files where drive_id = 'd1') = 1, 'un solo file importato');
+select pg_temp.expect((select uploaded_by from files where drive_id = 'd1') = '00000000-0000-0000-0000-00000000000b', 'file attribuito all''autore già iscritto');
+select pg_temp.expect((select created_at from files where drive_id = 'd1') = '2024-10-05T10:00:00Z', 'data originale del Drive conservata');
+select pg_temp.expect((select imported_at is not null and not needs_processing from files where drive_id = 'd1'), 'data di importazione registrata');
+select pg_temp.expect((select degree = 'magistrale' and study_year = 1 and year = '2024/2025' from courses c join files f on f.course_id = c.id where f.drive_id = 'd1'), 'corso creato con laurea, anno e anno accademico');
+select pg_temp.expect((select points || ',' || upload_count from profiles where email = 'n.cognome@campus.unimib.it')
+  = (split_part(current_setting('test.pts'), ',', 1)::int + 10) || ',' || (split_part(current_setting('test.pts'), ',', 2)::int + 1), '+10 punti e +1 caricamento all''autore iscritto');
+select pg_temp.expect(exists (select 1 from audit_log where action = 'file_importato' and details like 'Appunti.pdf%'), 'importazione nel registro');
+-- tetto di punti: 25 a persona
+update app_settings set value = '25' where key = 'import_points_cap';
+set role anon;
+select import_register(current_setting('test.token'), jsonb_build_object('drive_id', 'd' || i, 'store', 'b2', 'path', 'import/d' || i || '.pdf',
+  'size', 100, 'name', 'F' || i || '.pdf', 'kind', 'pdf', 'mime', 'application/pdf', 'owner', 'n.cognome@campus.unimib.it',
+  'course', 'bioinorganica', 'degree', 'magistrale', 'study_year', 1, 'aa', '2024-25', 'created', '2025-03-01T10:00:00Z'))
+from generate_series(2, 4) i;
+reset role;
+select pg_temp.expect((select points from profiles where email = 'n.cognome@campus.unimib.it') = split_part(current_setting('test.pts'), ',', 1)::int + 25, 'tetto di punti per i file importati');
+select pg_temp.expect((select count(distinct course_id) from files where drive_id in ('d1', 'd2', 'd3', 'd4')) = 1, 'stesso corso e anno accademico: corso riutilizzato');
+update app_settings set value = '300' where key = 'import_points_cap';
+-- autore non ancora iscritto; corso con anno non valido → "Da assegnare"; anno accademico diverso → altro corso
+set role anon;
+select import_register(current_setting('test.token'), jsonb_build_object('drive_id', 'n' || i, 'store', 'r2', 'path', 'import/n' || i || '.m4a',
+  'size', 5000, 'name', 'Lezione ' || i || '.m4a', 'kind', 'audio', 'mime', 'audio/mp4', 'owner', 'nuovo.studente@campus.unimib.it',
+  'course', 'Bioinorganica', 'degree', 'magistrale', 'study_year', 3, 'aa', '2025/2026', 'created', '2025-10-01T10:00:00Z', 'needs_processing', true))
+from generate_series(1, 2) i;
+reset role;
+select pg_temp.expect((select count(*) from files where drive_id in ('n1', 'n2') and uploaded_by is null) = 2, 'autore non iscritto: file in attesa');
+select pg_temp.expect((select count(*) from import_pending where email = 'nuovo.studente@campus.unimib.it') = 2, 'email dell''autore conservata a parte');
+select pg_temp.expect((select degree is null and study_year is null and year = '2025/2026' from courses c join files f on f.course_id = c.id where f.drive_id = 'n1'), 'anno non valido: corso da assegnare');
+select pg_temp.expect((select count(distinct course_id) from files where drive_id in ('d1', 'n1')) = 2, 'anno accademico diverso: corso separato');
+select pg_temp.expect((select needs_processing and storage = 'r2' from files where drive_id = 'n1'), 'registrazione su Cloudflare da comprimere');
+insert into auth.users values ('00000000-0000-0000-0000-0000000000ee', 'Nuovo.Studente@campus.unimib.it', '{"full_name":"Nuovo Studente"}');
+select pg_temp.expect((select points = 20 and upload_count = 2 from profiles where email = 'nuovo.studente@campus.unimib.it'), 'primo accesso: punti del Drive accreditati');
+select pg_temp.expect((select count(*) from files where uploaded_by = '00000000-0000-0000-0000-0000000000ee') = 2, 'primo accesso: file del Drive attribuiti');
+select pg_temp.expect(not exists (select 1 from import_pending where email = 'nuovo.studente@campus.unimib.it'), 'primo accesso: attesa chiusa');
+set role anon;
+select import_register(current_setting('test.token'), jsonb_build_object('drive_id', 'n3', 'store', 'b2', 'path', 'import/n3.pdf',
+  'size', 10, 'name', 'Dopo.pdf', 'kind', 'pdf', 'mime', 'application/pdf', 'owner', 'nuovo.studente@campus.unimib.it', 'course', 'Fotochimica'));
+reset role;
+select pg_temp.expect((select points from profiles where email = 'nuovo.studente@campus.unimib.it') = 30, 'dopo l''iscrizione i punti arrivano subito');
+-- Cloudflare pieno: l'importazione aspetta la compressione
+update app_settings set value = '12000' where key = 'r2_quota_bytes';
+set role anon;
+select pg_temp.expect(import_prepare(current_setting('test.token'), 'zz', 'r2', 5000) = 'full', 'archivio pieno: importazione in attesa');
+reset role;
+update app_settings set value = '10200547328' where key = 'r2_quota_bytes';
+-- uno studente non può fingere un'importazione
+set role authenticated;
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000b","email":"n.cognome@campus.unimib.it"}', false);
+insert into files (course_id, title, original_name, storage_path, storage, mime, kind, size, imported_at, drive_id, needs_processing)
+values ((select id from courses where name = 'Fotochimica'), 'Finto', 'f.m4a', '00000000-0000-0000-0000-00000000000b/f.m4a', 'r2', 'audio/mp4', 'audio', 10, now(), 'finto', false);
+reset role;
+select pg_temp.expect((select imported_at is null and drive_id is null and needs_processing from files where title = 'Finto'), 'studente: niente date o id di importazione, registrazione da comprimere');
+-- Pulizia: file importati protetti per 6 mesi; registrazioni e documenti con finestre diverse; archivi separati
+update files set created_at = now() - interval '800 days' where drive_id in ('d1', 'n1') or title = 'Finto';
+select pg_temp.expect(not exists (select 1 from storage_eviction_order('b2') where file_id = (select id from files where drive_id = 'd1')), 'file importato da poco: protetto');
+update files set imported_at = now() - interval '200 days' where drive_id in ('d1', 'n1');
+select pg_temp.expect(exists (select 1 from storage_eviction_order('b2') where file_id = (select id from files where drive_id = 'd1')), 'dopo 6 mesi il file importato è eliminabile');
+select pg_temp.expect(not exists (select 1 from storage_eviction_order('b2') where file_id = (select id from files where drive_id = 'n1')), 'ogni archivio libera spazio solo tra i suoi file');
+insert into file_opens (file_id, user_id, day) select id, '00000000-0000-0000-0000-00000000000a', current_date - 400 from files where drive_id in ('d1', 'n1');
+select pg_temp.expect((select opens from storage_eviction_order('b2') where file_id = (select id from files where drive_id = 'd1')) = 1, 'documenti: aperture contate per un anno e mezzo');
+select pg_temp.expect((select opens from storage_eviction_order('r2') where file_id = (select id from files where drive_id = 'n1')) = 0, 'registrazioni: aperture contate per un anno');
+-- Robot
+set role anon;
+select pg_temp.expect_error($q$select * from robot_pending('sbagliato-sbagliato-sbagliato-sbagliato')$q$, 'robot: codice sbagliato rifiutato');
+select pg_temp.expect((select count(*) from robot_pending(current_setting('test.token'))) = 3, 'robot: registrazioni da comprimere');
+select pg_temp.expect(robot_done(current_setting('test.token'), (select id from robot_pending(current_setting('test.token')) where original_name = 'Lezione 1.m4a'),
+  'import/n1-c.m4a', '', 1200, 'audio/mp4', 'Lezione 1.m4a'), 'robot: file compresso registrato');
+select set_config('test.zip', robot_add(current_setting('test.token'), (select id from robot_pending(current_setting('test.token')) where original_name = 'Lezione 2.m4a'),
+  '{"path": "import/z1.mp4", "size": 300, "name": "Lezione A.mp4", "title": "Lezione A", "kind": "video", "mime": "video/mp4"}')::text, false);
+select pg_temp.expect(robot_add(current_setting('test.token'), (select id from robot_pending(current_setting('test.token')) where original_name = 'Lezione 2.m4a'),
+  '{"path": "import/z1-bis.mp4", "size": 300, "name": "Lezione A.mp4", "title": "Lezione A", "kind": "video", "mime": "video/mp4"}') = current_setting('test.zip')::bigint,
+  'robot: lezione già estratta non duplicata (ripresa dopo interruzione)');
+select pg_temp.expect((select array_agg(x) from robot_extracted(current_setting('test.token'), (select id from robot_pending(current_setting('test.token')) where original_name = 'Lezione 2.m4a')) x)
+  = array['Lezione A.mp4'], 'robot: elenco delle lezioni già estratte');
+select robot_failed(current_setting('test.token'), (select id from robot_pending(current_setting('test.token')) where original_name = 'f.m4a'), 'formato non valido');
+reset role;
+select pg_temp.expect((select size = 1200 and storage_path = 'import/n1-c.m4a' and not needs_processing from files where drive_id = 'n1'), 'robot: dimensione e percorso aggiornati');
+select pg_temp.expect((select course_id = (select course_id from files where drive_id = 'n2') and uploaded_by = '00000000-0000-0000-0000-0000000000ee'
+  and not needs_processing from files where id = current_setting('test.zip')::bigint), 'robot: lezione estratta nello stesso corso e con lo stesso autore');
+select set_config('test.pts', (select points || ',' || upload_count from profiles where email = 'nuovo.studente@campus.unimib.it'), false);
+select set_config('test.n2', (select id from files where drive_id = 'n2')::text, false);
+set role anon;
+select robot_remove(current_setting('test.token'), current_setting('test.n2')::bigint);
+reset role;
+select pg_temp.expect(not exists (select 1 from files where drive_id = 'n2'), 'robot: archivio ZIP rimosso');
+select pg_temp.expect((select points || ',' || upload_count from profiles where email = 'nuovo.studente@campus.unimib.it') = current_setting('test.pts'), 'robot: nessun punto tolto');
+select pg_temp.expect((select processing_error from files where title = 'Finto') = 'formato non valido', 'robot: errore registrato');
+set role authenticated;
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000a","email":"admin.uno@campus.unimib.it"}', false);
+select pg_temp.expect((import_status() ->> 'imported')::int = 7 and (import_status() ->> 'processing')::int = 0, 'stato importazione per gli admin');
+select set_config('test.old', current_setting('test.token'), false);
+select set_config('test.token', new_service_token(), false);
+reset role;
+select set_config('request.jwt.claims', '', false);
+set role anon;
+select pg_temp.expect_error($q$select * from robot_pending(current_setting('test.old'))$q$, 'nuovo codice: il vecchio non funziona più');
+reset role;
+delete from files where imported_at is not null or title = 'Finto';
+delete from courses where description like 'Materiali importati%';
 
 -- ===== Docenti =====
 select pg_temp.expect((select count(*) from professors) = 62, 'elenco docenti caricato una sola volta (62)');

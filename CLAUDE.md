@@ -19,6 +19,14 @@ immagini, audio e video. Fatto da Aleksey Symonenko (rappresentante, utente non 
 - **Backblaze B2**: bucket `appunti-stc-bicocca-2026`, endpoint `s3.eu-central-003.backblazeb2.com`,
   tetti di spesa a $0, ciclo di vita "keep only last version". Chiavi nei Secrets della funzione
   (`B2_KEY_ID`, `B2_APP_KEY`, `B2_BUCKET`, `B2_ENDPOINT`). Limite 9,5 GB con pulizia automatica.
+- **Cloudflare R2** (registrazioni audio/video, 10 GB gratis, download illimitati): bucket previsto
+  `appunti-stc-registrazioni`; Secrets `R2_ACCOUNT_ID`, `R2_KEY_ID`, `R2_APP_KEY`, `R2_BUCKET`. Senza R2 tutto va su B2.
+  `files.storage` = 'supabase' | 'b2' | 'r2'. Limite 9,5 GB per archivio, pulizia separata.
+- **Robot** GitHub Actions (`.github/workflows/robot.yml` + `drive-import/robot.py`, ogni ora): comprime le
+  registrazioni su R2 (audio AAC mono 48k .m4a, video H.264 720p .mp4) e scompatta gli ZIP (ripresa senza doppioni).
+  Secrets GitHub: `SERVICE_TOKEN` + i 4 R2. Il ramo di default è quello del sito (serve per lo schedule).
+- **Codice di servizio** (Amministrazione → Importazione): usato da script Google e robot; nel DB solo l'hash
+  (`app_settings.service_token_hash`); RPC `import_*` e `robot_*` lo verificano.
 - **Google OAuth** (Google Cloud, app "e-Learning Bicocca", in produzione) collegato a Supabase.
 - Accesso consentito solo a `@campus.unimib.it` (controllato dal database, `is_campus()`).
 
@@ -29,14 +37,19 @@ immagini, audio e video. Fatto da Aleksey Symonenko (rappresentante, utente non 
 - `docs/index.html` (icone SVG, CSP), `docs/css/style.css`, `docs/privacy.html`.
 - `supabase/setup.sql` schema + permessi, **rieseguibile** (idempotente).
 - `supabase/professori.sql` 62 docenti (inseriti solo se tabella vuota).
-- `supabase/functions/b2/index.ts` firma link S3 (SigV4), quota, pulizia, CORS automatico.
+- `supabase/functions/b2/index.ts` firma link S3 (SigV4) per B2 e R2, quota, pulizia, CORS automatico (B2),
+  azioni `import-begin/part/finish/abort` (caricamento a parti da 32 MB) per lo script del Drive.
+- `drive-import/inventario.gs` (inventario Drive, solo lettura), `drive-import/importa.gs` (trasferimento Drive →
+  archivi, elenco `ANNI` corso→anno), `drive-import/robot.py`.
 
 ## Funzionalità presenti
 Corsi per laurea (triennale 1–3, magistrale 1–2) e **anno accademico** (menu, normalizzato), menu ⋯
 sulle schede per modificare/spostare (solo admin); upload su B2 fino a 500 MB; anteprime
 PDF/immagini/audio/video; dashboard con i corsi aperti di recente (tabella `course_visits`, uguale su ogni dispositivo; localStorage solo di riserva); ricerca; classifica a leghe (punti: +10 file max 10/giorno, +1 apertura
 altrui, −10 se un admin elimina); segnalazioni, sospensione utenti; file protetti 📌; pulizia
-automatica (meno aperti nell'ultimo anno, mai file < 14 giorni); pagine Rappresentanti e
+automatica per archivio (documenti: aperture ultimi 548 giorni; registrazioni: 365; mai file < 14 giorni né
+importati da < 6 mesi); importazione Drive con punti (+10/file, tetto 300, accreditati anche al primo accesso
+via `import_pending`/`import_credits`); formati extra .cif/.mryx; pagine Rappresentanti e
 Professori (dati nel DB, modificabili dagli admin); firma "Fatto con ♥ da Aleksey Symonenko".
 Studenti: vedono tutto, caricano, creano corsi, segnalano. Admin: modificano/eliminano tutto,
 gestiscono ruoli, sospensioni, contenuti delle pagine. Il primo utente è diventato admin.
@@ -57,9 +70,13 @@ gestiscono ruoli, sospensioni, contenuti delle pagine. Il primo utente è divent
 - Interfaccia: servire `docs/` e usare Playwright (`/opt/node-tools/node_modules/playwright`),
   con `supabaseUrl: ''` per la modalità anteprima.
 
+## Test aggiuntivi
+- Script Google: `node drive-import/test/importa.test.cjs` (Drive/Fogli/UrlFetch finti + vera funzione B2 in un
+  worker, file grandi a parti, pause, archivio pieno). Il robot si prova con PostgREST reale + moto (S3 finto) + ffmpeg.
+
 ## In sospeso
-- **Importazione dal vecchio Google Drive** (proposta, non ancora iniziata): script Apps Script
-  per l'elenco file+autori, ZIP del Drive, pagina admin "Importa da Drive" che crea corsi e
-  cartelle e attribuisce i file (e i punti) agli autori anche al loro primo accesso.
-  In attesa dall'utente: dimensione del Drive, screenshot delle cartelle, via libera.
+- **Importazione dal vecchio Drive** (cartella `Scienze e Tecnologie Chimiche`, 704 file, 23,6 GB, 69 autori;
+  ~20 GB sono registrazioni): codice pronto. L'utente deve: rieseguire setup.sql, configurare R2, ripubblicare B2,
+  generare il codice, Secrets GitHub, poi avviare `importa.gs`. Verificare con lui l'elenco `ANNI` (anni di corso
+  ipotizzati, magistrale tutta al 1° anno).
 - Possibili: cambio URL (organizzazione GitHub `appunti-stc`), nuovi formati (.key, .pages, .rtf, .csv).

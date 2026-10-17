@@ -480,6 +480,14 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: color-m
 .evict-list { margin: 0; padding-left: 1.2rem; display: grid; gap: 6px; font-size: .88rem; }
 .evict-list li span { display: block; }
 .a-file_eliminato_auto { background: var(--err-soft); color: var(--err); }
+.a-file_importato, .a-archivio_scompattato { background: var(--accent-soft); color: color-mix(in srgb, var(--accent) 45%, #000); }
+.import-stats { list-style: none; margin: 4px 0 8px; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+.import-stats li { background: var(--line-2); border-radius: var(--radius-sm); padding: 10px 12px; }
+.import-stats strong { display: block; font-size: 1.3rem; }
+.import-stats small { color: var(--muted); }
+.token-box { background: var(--accent-soft); border-radius: var(--radius-sm); padding: 12px; margin: 0 0 12px; display: grid; gap: 8px; }
+.token-box input { font-family: ui-monospace, Menlo, monospace; font-size: .85rem; width: 100%; }
+.token-box .btn { justify-self: start; }
 .a-file_protetto { background: var(--ok-soft); color: var(--ok); }
 
 /* ---------- Classifica ---------- */

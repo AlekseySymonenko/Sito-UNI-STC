@@ -30,7 +30,10 @@
     ods: ['application/vnd.oasis.opendocument.spreadsheet', 'document'],
     txt: ['text/plain', 'document'], md: ['text/plain', 'document'],
     zip: ['application/zip', 'other'],
+    cif: ['application/octet-stream', 'other'], mryx: ['application/octet-stream', 'other'],
   };
+  // File che stanno sugli archivi esterni (Backblaze B2 o Cloudflare R2), gestiti dalla funzione
+  function external(f) { return f.storage === 'b2' || f.storage === 'r2'; }
 
   function typeFor(name) {
     var m = /\.([a-z0-9]+)$/i.exec(name || '');
@@ -225,8 +228,8 @@
 
       async deleteCourse(id) {
         var files = check(await sb.from('files').select('storage_path, storage').eq('course_id', id));
-        if (files.some(function (f) { return f.storage === 'b2'; })) await b2({ action: 'delete-course-files', courseId: id });
-        files = files.filter(function (f) { return f.storage !== 'b2'; });
+        if (files.some(external)) await b2({ action: 'delete-course-files', courseId: id });
+        files = files.filter(function (f) { return !external(f); });
         for (var i = 0; i < files.length; i += 100) {
           check(await sb.storage.from(BUCKET).remove(files.slice(i, i + 100).map(function (f) { return f.storage_path; })));
         }
@@ -258,7 +261,7 @@
           var up = await b2({ action: 'upload', name: file.name, size: file.size });
           await putWithProgress(up.url, file, up.contentType, onProgress);
           var done = await b2({
-            action: 'confirm', key: up.key, name: file.name, courseId: courseId,
+            action: 'confirm', key: up.key, name: file.name, courseId: courseId, store: up.store,
             title: clean(meta.title, 200), description: clean(meta.description, 2000),
           });
           return { id: done.id, evicted: up.evicted || [] };
@@ -280,7 +283,7 @@
       async fileUrl(file, download, count) {
         // Conta un'apertura (al massimo una al giorno per studente, lo decide il database)
         if (count) sb.rpc('record_file_open', { fid: file.id }).then(function () {}, function () {});
-        if (file.storage === 'b2') {
+        if (external(file)) {
           var ck = file.id + (download ? ':d' : ':v');
           var hit = urlCache[ck];
           if (hit && hit.until > Date.now()) return hit.url;
@@ -293,7 +296,7 @@
       },
 
       async deleteFile(file) {
-        if (file.storage === 'b2') { await b2({ action: 'delete', id: file.id }); return; }
+        if (external(file)) { await b2({ action: 'delete', id: file.id }); return; }
         check(await sb.storage.from(BUCKET).remove([file.storage_path]));
         var rows = check(await sb.from('files').delete().eq('id', file.id).select('id'));
         if (!rows.length) throw new Error('Non hai i permessi per questa operazione.');
@@ -364,20 +367,30 @@
 
       async setPinned(fileId, value) { check(await sb.rpc('set_pinned', { fid: fileId, value: Boolean(value) })); },
 
-      async evictionPreview() {
+      // Prossimi file eliminabili in automatico, per archivio ('b2' documenti, 'r2' registrazioni)
+      async evictionPreview(store) {
         if (!USE_B2) return [];
-        return check(await sb.rpc('b2_eviction_preview', { lim: 5 })) || [];
+        var res = await sb.rpc('storage_eviction_preview', { st: store || 'b2', lim: 5 });
+        if (res.error && store !== 'r2') return check(await sb.rpc('b2_eviction_preview', { lim: 5 })) || []; // database non aggiornato
+        return check(res) || [];
       },
 
-      // Spazio usato rispetto al limite dell'archivio in uso
+      // Spazio usato rispetto al limite dell'archivio in uso (r2: Cloudflare, se configurato)
       async usage() {
         if (USE_B2) {
           var u = await b2({ action: 'usage' });
-          return { used: u.used, quota: u.quota, where: 'Backblaze B2' };
+          return { used: u.used, quota: u.quota, where: 'Backblaze B2', r2: u.r2 || null };
         }
         var st = await this.stats();
         return { used: st.bytes - (st.b2_bytes || 0), quota: 1024 * 1024 * 1024, where: 'Supabase' };
       },
+
+      // Importazione dal vecchio Drive (null se il database non è ancora aggiornato)
+      async importStatus() {
+        var res = await sb.rpc('import_status');
+        return res.error ? null : res.data;
+      },
+      async newServiceToken() { return check(await sb.rpc('new_service_token')); },
 
       async listAudit() {
         return check(await sb.from('audit_log').select('*, user:profiles(name)').order('id', { ascending: false }).limit(40));
@@ -572,7 +585,15 @@
       },
       async evictionPreview() { return []; },
       async usage() {
-        return { used: files.reduce(function (a, f) { return a + f.size; }, 0), quota: 10 * 1024 * 1024 * 1024, where: 'anteprima' };
+        var sum = function (rec) { return files.filter(function (f) { return rec === (f.kind === 'audio' || f.kind === 'video'); }).reduce(function (a, f) { return a + f.size; }, 0); };
+        return { used: sum(false), quota: 10200547328, where: 'anteprima', r2: { used: sum(true), quota: 10200547328 } };
+      },
+      async importStatus() {
+        return { has_token: false, imported: 0, imported_b2: 0, imported_r2: 0, processing: 0, authors: 0, authors_waiting: 0, errors: [], last: null };
+      },
+      async newServiceToken() {
+        requireAdmin();
+        return 'anteprima-' + uuid().replace(/-/g, '') + uuid().replace(/-/g, '').slice(0, 22);
       },
       async deleteFile(file) {
         requireAdmin();
