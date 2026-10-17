@@ -85,7 +85,8 @@ I file già caricati su Supabase restano visibili; i nuovi vanno su B2.
 La chiave di B2 resta solo nei Secrets di Supabase: il sito non la vede mai.
 
 ### Pulizia automatica dello spazio
-Ogni archivio (Backblaze per i documenti, Cloudflare per le registrazioni) ha un limite di 9,5 GB.
+Ogni archivio ha un limite: 9,5 GB su Backblaze (documenti) e 8 GB su Cloudflare (registrazioni, con 2 GB di margine
+perché lì non esiste un tetto di spesa).
 Se un nuovo file non ci sta, il sistema elimina **solo quanto basta e solo da quell'archivio**, scegliendo:
 1. i file aperti meno volte (ogni studente conta al massimo una volta al giorno): per i **documenti**
    si contano le aperture dell'**ultimo anno e mezzo**, per le **registrazioni** dell'**ultimo anno**;

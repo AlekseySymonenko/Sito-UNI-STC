@@ -238,7 +238,7 @@ select pg_temp.expect_error('select new_service_token()', 'solo gli admin genera
 select pg_temp.expect_error('select * from import_pending', 'studenti non leggono le email del Drive');
 select pg_temp.expect_error('select * from import_credits', 'studenti non leggono i crediti del Drive');
 select pg_temp.expect_error('select import_status()', 'stato importazione riservato agli admin');
-select pg_temp.expect((storage_usage('r2') ->> 'quota')::bigint = 10200547328, 'spazio Cloudflare visibile agli studenti');
+select pg_temp.expect((storage_usage('r2') ->> 'quota')::bigint = 8589934592, 'spazio Cloudflare visibile agli studenti (limite 8 GB)');
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000a","email":"admin.uno@campus.unimib.it"}', false);
 select set_config('test.token', new_service_token(), false);
 select pg_temp.expect(length(current_setting('test.token')) = 64, 'codice di servizio generato');
@@ -303,7 +303,7 @@ update app_settings set value = '12000' where key = 'r2_quota_bytes';
 set role anon;
 select pg_temp.expect(import_prepare(current_setting('test.token'), 'zz', 'r2', 5000) = 'full', 'archivio pieno: importazione in attesa');
 reset role;
-update app_settings set value = '10200547328' where key = 'r2_quota_bytes';
+update app_settings set value = '8589934592' where key = 'r2_quota_bytes';
 -- uno studente non può fingere un'importazione
 set role authenticated;
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000b","email":"n.cognome@campus.unimib.it"}', false);

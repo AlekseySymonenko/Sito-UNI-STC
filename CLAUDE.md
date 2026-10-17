@@ -21,7 +21,7 @@ immagini, audio e video. Fatto da Aleksey Symonenko (rappresentante, utente non 
   (`B2_KEY_ID`, `B2_APP_KEY`, `B2_BUCKET`, `B2_ENDPOINT`). Limite 9,5 GB con pulizia automatica.
 - **Cloudflare R2** (registrazioni audio/video, 10 GB gratis, download illimitati): bucket previsto
   `appunti-stc-registrazioni`; Secrets `R2_ACCOUNT_ID`, `R2_KEY_ID`, `R2_APP_KEY`, `R2_BUCKET`. Senza R2 tutto va su B2.
-  `files.storage` = 'supabase' | 'b2' | 'r2'. Limite 9,5 GB per archivio, pulizia separata.
+  `files.storage` = 'supabase' | 'b2' | 'r2'. Limite 9,5 GB su B2 e 8 GB su R2 (R2 non ha tetto di spesa: margine per i picchi del robot), pulizia separata.
 - **Robot** GitHub Actions (`.github/workflows/robot.yml` + `drive-import/robot.py`, ogni ora): comprime le
   registrazioni su R2 (audio AAC mono 48k .m4a, video H.264 720p .mp4) e scompatta gli ZIP (ripresa senza doppioni).
   Secrets GitHub: `SERVICE_TOKEN` + i 4 R2. Il ramo di default è quello del sito (serve per lo schedule).

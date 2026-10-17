@@ -125,12 +125,15 @@ insert into public.app_settings (key, value) values
   ('evict_grace_days', '14'),          -- i file più recenti di così non vengono mai eliminati
   ('evict_window_days', '365'),        -- registrazioni audio/video: aperture contate nell'ultimo anno
   ('evict_window_days_docs', '548'),   -- documenti (PDF, appunti, foto…): aperture contate nell'ultimo anno e mezzo
-  ('r2_quota_bytes', '10200547328'),   -- 9,5 GB: sotto i 10 GB gratuiti di Cloudflare R2
+  ('r2_quota_bytes', '8589934592'),    -- 8 GB: margine di 2 GB sotto i 10 GB gratuiti di Cloudflare R2 (nessun costo
+                                       --   anche quando il robot scompatta uno ZIP e per un momento esistono entrambi)
   ('import_grace_days', '183'),        -- i file importati dal Drive sono protetti per 6 mesi
   ('import_points_per_file', '10'),    -- punti per ogni file importato…
   ('import_points_cap', '300'),        -- …fino a un massimo per persona
   ('import_max_mb', '3000')            -- dimensione massima di un file importato (gli ZIP vengono poi scompattati)
 on conflict (key) do nothing;
+-- Aggiornamento: Cloudflare da 9,5 a 8 GB (solo se non è stato cambiato a mano)
+update public.app_settings set value = '8589934592' where key = 'r2_quota_bytes' and value = '10200547328';
 -- Aggiornamento: il vecchio valore predefinito era 6 mesi
 update public.app_settings set value = '365' where key = 'evict_window_days' and value = '180';
 
@@ -390,7 +393,7 @@ returns bigint language sql stable security definer set search_path = public as 
 $$;
 create or replace function public.storage_quota(st text)
 returns bigint language sql stable security definer set search_path = public as $$
-  select public.setting_int(st || '_quota_bytes', 10200547328)
+  select public.setting_int(st || '_quota_bytes', case when st = 'r2' then 8589934592 else 10200547328 end)
 $$;
 revoke execute on function public.storage_used(text), public.storage_quota(text) from public, anon, authenticated;
 
