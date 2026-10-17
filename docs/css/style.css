@@ -485,6 +485,12 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: color-m
 .import-stats li { background: var(--line-2); border-radius: var(--radius-sm); padding: 10px 12px; }
 .import-stats strong { display: block; font-size: 1.3rem; }
 .import-stats small { color: var(--muted); }
+.check-list { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 8px; }
+.check-list li { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: var(--radius-sm); font-size: .9rem; }
+.check-list li.ok { background: var(--ok-soft); color: var(--ok); }
+.check-list li.bad { background: var(--err-soft); color: var(--err); }
+.check-list li svg { width: 18px; height: 18px; flex: none; margin-top: 2px; }
+.check-list small { display: block; margin-top: 2px; }
 .token-box { background: var(--accent-soft); border-radius: var(--radius-sm); padding: 12px; margin: 0 0 12px; display: grid; gap: 8px; }
 .token-box input { font-family: ui-monospace, Menlo, monospace; font-size: .85rem; width: 100%; }
 .token-box .btn { justify-self: start; }

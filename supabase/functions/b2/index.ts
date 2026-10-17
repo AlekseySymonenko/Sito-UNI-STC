@@ -269,6 +269,47 @@ async function makeRoom(req: Request, b2: B2, size: number) {
   return removed.map((r) => r.file_title);
 }
 
+// ---- Diagnostica degli archivi ----------------------------------------------------------------
+async function checkStore(cfg: B2, origin: string) {
+  const steps: { step: string; ok: boolean; detail: string }[] = [];
+  const name = cfg.name === 'r2' ? 'Cloudflare R2' : 'Backblaze B2';
+  const key = `_verifica/${crypto.randomUUID()}.txt`;
+  const fail = (message: string) => ({ store: cfg.name, ok: false, steps, message: `${name}: ${message}` });
+  let put: Response;
+  try {
+    put = await fetch(await sign(cfg, 'PUT', key, 300), { method: 'PUT', body: 'ok' });
+  } catch (_err) {
+    steps.push({ step: 'connessione', ok: false, detail: cfg.host });
+    return fail(`indirizzo ${cfg.host} non raggiungibile. Controlla R2_ACCOUNT_ID (o R2_ENDPOINT se il bucket è nella zona EU).`);
+  }
+  const putText = await put.text();
+  steps.push({ step: 'scrittura', ok: put.ok, detail: put.ok ? 'ok' : `${put.status} ${xmlValue(putText, 'Code')}` });
+  if (!put.ok) {
+    const code = xmlValue(putText, 'Code');
+    if (code === 'NoSuchBucket' || put.status === 404) {
+      return fail(`bucket "${cfg.bucket}" non trovato. Controlla il nome in ${cfg.name === 'r2' ? 'R2_BUCKET' : 'B2_BUCKET'}` +
+        (cfg.name === 'r2' ? ' e, se nella pagina del bucket l\'indirizzo S3 API contiene ".eu.", aggiungi il Secret R2_ENDPOINT.' : '.'));
+    }
+    return fail(`le chiavi non sono valide o non hanno il permesso di scrittura (${put.status} ${code}). ` +
+      (cfg.name === 'r2' ? 'Ricrea il token con "Object Read & Write" sul bucket e ricopia R2_KEY_ID e R2_APP_KEY.' : ''));
+  }
+  const pre = await fetch(await sign(cfg, 'PUT', key, 300), {
+    method: 'OPTIONS',
+    headers: { Origin: origin, 'Access-Control-Request-Method': 'PUT', 'Access-Control-Request-Headers': 'content-type' },
+  }).catch(() => null);
+  const allow = pre?.headers.get('access-control-allow-origin') || '';
+  const corsOk = Boolean(pre && pre.ok && (allow === origin || allow === '*'));
+  steps.push({ step: 'CORS', ok: corsOk, detail: pre ? `${pre.status} ${allow || 'nessuna autorizzazione per il sito'}` : 'nessuna risposta' });
+  await pre?.text().catch(() => '');
+  await b2Delete(cfg, key, put.headers.get('x-amz-version-id')).catch(() => null);
+  if (!corsOk) {
+    return fail(cfg.name === 'r2'
+      ? `la regola CORS non autorizza ${origin}. Nel bucket → Settings → CORS Policy incolla di nuovo la regola del README e premi Save.`
+      : 'regola CORS non attiva: riprova a caricare un file, la funzione la imposta da sola.');
+  }
+  return { store: cfg.name, ok: true, steps, message: `${name}: tutto a posto.` };
+}
+
 // ---- Importazione dal vecchio Google Drive (script Google, codice di servizio) ----------------
 const PART_SIZE = 32 * 1024 * 1024;  // parti da 32 MB (uguali per tutte: lo richiede R2)
 const BIG_ZIP = 100 * 1024 * 1024;   // ZIP più grandi: registrazioni da scompattare (robot)
@@ -466,6 +507,17 @@ async function handle(req: Request, body: Record<string, unknown>) {
       if (f.storage === 'b2' || f.storage === 'r2') await b2Delete(storeConfig(f.storage), f.storage_path, f.storage_version);
       await sbJson(req, `/rest/v1/files?id=eq.${f.id}`, { method: 'DELETE' });
       return { ok: true };
+    }
+
+    case 'storage-check': {
+      // Diagnostica (solo admin): prova dal server chiavi, bucket e regola CORS di ogni archivio
+      if (!isAdmin) throw new HttpError(403, 'Operazione riservata agli amministratori.');
+      const origin = env('ALLOWED_ORIGIN') || req.headers.get('Origin') || 'https://alekseysymonenko.github.io';
+      const stores = [b2Config(), r2Config()].filter(Boolean) as B2[];
+      const results = [];
+      for (const cfg of stores) results.push(await checkStore(cfg, origin));
+      if (!r2Config()) results.push({ store: 'r2', ok: false, steps: [], message: 'Cloudflare R2 non configurato: mancano dei Secrets (R2_ACCOUNT_ID, R2_KEY_ID, R2_APP_KEY, R2_BUCKET).' });
+      return { origin, results };
     }
 
     case 'delete-course-files': {

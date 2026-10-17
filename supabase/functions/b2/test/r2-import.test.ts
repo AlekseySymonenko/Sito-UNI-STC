@@ -16,9 +16,10 @@ let calls: string[] = [];
 let bodies: Record<string, unknown>[] = [];
 let prepare = 'ok';
 let r2Used = 0;
+let r2Mode: 'ok' | 'nocors' | 'nobucket' | 'badkey' = 'ok';
 const FILE = { id: 5, storage: 'r2', storage_path: 'u-stud/x.m4a', storage_version: null, original_name: 'Lezione.m4a', kind: 'audio' };
 
-beforeEach(() => { calls = []; bodies = []; prepare = 'ok'; r2Used = 0; });
+beforeEach(() => { calls = []; bodies = []; prepare = 'ok'; r2Used = 0; r2Mode = 'ok'; });
 
 globalThis.fetch = (async (input: string | URL | Request, init: RequestInit = {}) => {
   const url = new URL(String(input));
@@ -30,8 +31,11 @@ globalThis.fetch = (async (input: string | URL | Request, init: RequestInit = {}
   if (url.host === 'proj.supabase.co') {
     const body = init.body ? JSON.parse(String(init.body)) : {};
     if (url.pathname.startsWith('/rest/v1/rpc/')) bodies.push({ rpc: url.pathname.slice(13), ...body });
-    if (url.pathname === '/auth/v1/user') return auth === 'Bearer student' ? json({ id: 'u-stud', email: 'n.cognome@campus.unimib.it' }) : json({}, 401);
-    if (url.pathname === '/rest/v1/profiles') return json([{ id: 'u-stud', role: 'student' }]);
+    if (url.pathname === '/auth/v1/user') {
+      if (auth === 'Bearer admin') return json({ id: 'u-adm', email: 'a.admin@campus.unimib.it' });
+      return auth === 'Bearer student' ? json({ id: 'u-stud', email: 'n.cognome@campus.unimib.it' }) : json({}, 401);
+    }
+    if (url.pathname === '/rest/v1/profiles') return json([{ id: auth === 'Bearer admin' ? 'u-adm' : 'u-stud', role: auth === 'Bearer admin' ? 'admin' : 'student' }]);
     if (url.pathname === '/rest/v1/rpc/service_ping') return json(body.token === TOKEN);
     if (url.pathname === '/rest/v1/rpc/import_prepare') return json(prepare);
     if (url.pathname === '/rest/v1/rpc/import_register') return json(77);
@@ -41,6 +45,19 @@ globalThis.fetch = (async (input: string | URL | Request, init: RequestInit = {}
     if (url.pathname === '/rest/v1/rpc/storage_make_room') return json([{ path: 'u-x/vecchia.m4a', version: null, file_title: 'Vecchia lezione' }]);
     if (url.pathname === '/rest/v1/files' && method === 'GET') return json([FILE]);
     if (url.pathname === '/rest/v1/files' && method === 'POST') { bodies.push(body); return json([{ id: 9 }], 201); }
+  }
+  if (url.pathname.includes('/_verifica/')) {
+    const r2 = url.host.includes('r2.');
+    if (method === 'PUT') {
+      if (r2 && r2Mode === 'nobucket') return new Response('<Error><Code>NoSuchBucket</Code></Error>', { status: 404 });
+      if (r2 && r2Mode === 'badkey') return new Response('<Error><Code>InvalidAccessKeyId</Code></Error>', { status: 403 });
+      return new Response('', { status: 200 });
+    }
+    if (method === 'OPTIONS') {
+      const ok = !(r2 && r2Mode === 'nocors');
+      return new Response(null, { status: ok ? 200 : 403, headers: ok ? { 'access-control-allow-origin': 'https://alekseysymonenko.github.io' } : {} });
+    }
+    if (method === 'DELETE') return new Response(null, { status: 204 });
   }
   if (url.host === 'acc123.r2.cloudflarestorage.com') {
     if (method === 'POST' && url.searchParams.has('uploads')) return new Response('<InitiateMultipartUploadResult><UploadId>UP1</UploadId></InitiateMultipartUploadResult>');
@@ -141,4 +158,17 @@ test('importazione: registrazione grande a parti su Cloudflare, poi registrata',
   assert.strictEqual(reg.p.needs_processing, true);
   assert.strictEqual(reg.p.kind, 'other');
   assert.strictEqual(reg.p.drive_id, 'big');
+});
+
+test('verifica archivi: solo admin, diagnosi chiara', async () => {
+  assert.strictEqual((await call('student', { action: 'storage-check' })).status, 403);
+  const ok = await call('admin', { action: 'storage-check' });
+  assert.deepStrictEqual(ok.data.results.map((r: { ok: boolean }) => r.ok), [true, true]);
+  r2Mode = 'nocors';
+  const nocors = await call('admin', { action: 'storage-check' });
+  assert.match(nocors.data.results[1].message, /CORS/);
+  r2Mode = 'nobucket';
+  assert.match((await call('admin', { action: 'storage-check' })).data.results[1].message, /R2_ENDPOINT/);
+  r2Mode = 'badkey';
+  assert.match((await call('admin', { action: 'storage-check' })).data.results[1].message, /chiavi non sono valide/);
 });

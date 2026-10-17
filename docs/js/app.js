@@ -4,7 +4,7 @@
 
   // Versione del sito: deve coincidere con data-v in index.html. Se Safari ha in
   // memoria una pagina principale vecchia, la ricarichiamo (una volta) aggirando la cache.
-  var VERSION = '20261017c';
+  var VERSION = '20261018a';
   if (document.documentElement.getAttribute('data-v') !== VERSION) {
     var tried = false;
     try { tried = sessionStorage.getItem('reload-v') === VERSION; sessionStorage.setItem('reload-v', VERSION); } catch (e) { /* ignora */ }
@@ -701,7 +701,9 @@
   function usagePanel(u, preview, stats, previewR2) {
     var external = u.where === 'Backblaze B2';
     var other = stats && external ? (stats.bytes || 0) - (stats.b2_bytes || 0) - (stats.r2_bytes || 0) : 0;
-    var html = '<section class="panel usage"><div class="panel-head"><h2>Spazio degli archivi</h2></div>';
+    var html = '<section class="panel usage"><div class="panel-head wrap"><h2>Spazio degli archivi</h2>' +
+      (external ? '<button class="btn btn-ghost btn-sm" type="button" data-action="storage-check">' + icon('check') + 'Verifica archivi</button>' : '') +
+      '</div><div data-check-box></div>';
     if (!external) {
       return html + storageBlock(esc(u.where), u.used, u.quota, preview, ' Quando lo spazio finisce, i caricamenti vengono bloccati: nessun costo.') + '</section>';
     }
@@ -1093,6 +1095,21 @@
             '<input type="text" readonly value="' + esc(code) + '" data-token-value>' +
             '<button class="btn btn-primary btn-sm" type="button" data-action="copy-token">' + icon('check') + 'Copia</button></div>';
         } catch (err) { fail(err); }
+        el.disabled = false;
+        return;
+      }
+      case 'storage-check': {
+        el.disabled = true;
+        var cbox = document.querySelector('[data-check-box]');
+        cbox.innerHTML = '<p class="muted small">Verifica in corso…</p>';
+        try {
+          var chk = await Api.storageCheck();
+          cbox.innerHTML = '<ul class="check-list">' + chk.results.map(function (r) {
+            return '<li class="' + (r.ok ? 'ok' : 'bad') + '">' + icon(r.ok ? 'check' : 'alert') + '<div><strong>' + esc(r.message) + '</strong>' +
+              (r.steps && r.steps.length ? '<small class="muted">' + r.steps.map(function (st) { return esc(st.step) + ': ' + esc(st.detail); }).join(' · ') + '</small>' : '') +
+              '</div></li>';
+          }).join('') + '</ul>';
+        } catch (err) { cbox.innerHTML = ''; fail(err); }
         el.disabled = false;
         return;
       }

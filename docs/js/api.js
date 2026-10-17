@@ -259,7 +259,14 @@
         if (file.size > CFG.maxUploadMb * 1024 * 1024) throw new Error('«' + file.name + '» supera il limite di ' + CFG.maxUploadMb + ' MB.');
         if (USE_B2) {
           var up = await b2({ action: 'upload', name: file.name, size: file.size });
-          await putWithProgress(up.url, file, up.contentType, onProgress);
+          try {
+            await putWithProgress(up.url, file, up.contentType, onProgress);
+          } catch (e) {
+            if (up.store === 'r2' && /interrotto/.test(e.message)) {
+              throw new Error('Cloudflare ha rifiutato il caricamento della registrazione. Un amministratore può controllare con «Verifica archivi» in Amministrazione.');
+            }
+            throw e;
+          }
           var done = await b2({
             action: 'confirm', key: up.key, name: file.name, courseId: courseId, store: up.store,
             title: clean(meta.title, 200), description: clean(meta.description, 2000),
@@ -384,6 +391,8 @@
         var st = await this.stats();
         return { used: st.bytes - (st.b2_bytes || 0), quota: 1024 * 1024 * 1024, where: 'Supabase' };
       },
+
+      async storageCheck() { return b2({ action: 'storage-check' }); },
 
       // Importazione dal vecchio Drive (null se il database non è ancora aggiornato)
       async importStatus() {
@@ -587,6 +596,9 @@
       async usage() {
         var sum = function (rec) { return files.filter(function (f) { return rec === (f.kind === 'audio' || f.kind === 'video'); }).reduce(function (a, f) { return a + f.size; }, 0); };
         return { used: sum(false), quota: 10200547328, where: 'anteprima', r2: { used: sum(true), quota: 10200547328 } };
+      },
+      async storageCheck() {
+        return { origin: location.origin, results: [{ store: 'b2', ok: true, steps: [], message: 'Anteprima: nessun archivio reale da verificare.' }] };
       },
       async importStatus() {
         return { has_token: false, imported: 0, imported_b2: 0, imported_r2: 0, processing: 0, authors: 0, authors_waiting: 0, errors: [], last: null };
